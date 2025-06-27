@@ -8,3 +8,9 @@ dependencies = [
     "langchain[openai]>=0.3.26",
     "pytest>=8.4.1",
 ]
+
+[project.scripts]
+theagent = "theagent.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

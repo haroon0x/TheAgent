@@ -1,5 +1,5 @@
 from pocketflow import Node
-from utils.call_llm import AlchemistAIProxy
+from theagent.utils.call_llm import AlchemistAIProxy
 import ast
 import os
 import shutil
@@ -283,21 +283,33 @@ class TestGenerationAgentNode(BaseAgentNode):
             tests.append({'name': func['name'], 'test_code': test_code})
         return tests
 
+    def _clean_test_code(self, code):
+        import re
+        code = re.sub(r'^```(?:python)?', '', code, flags=re.MULTILINE).strip()
+        code = re.sub(r'```$', '', code, flags=re.MULTILINE).strip()
+        return code
+
     def post(self, shared, prep_res, exec_res):
         output_mode = getattr(self.args, 'output', 'console')
         file_path = self.args.file
         verbose = getattr(self.args, 'verbose', False)
+        import os
         if output_mode == 'console':
             print("\n=== Generated Unit Tests ===\n")
             for item in exec_res:
                 print(f"Function: {item['name']}")
-                print(item['test_code'])
+                print(self._clean_test_code(item['test_code']))
                 print("-"*40)
         else:
-            test_file = file_path.replace('.py', '_testgen.py')
+            # Write to test_<filename>.py
+            base = os.path.basename(file_path)
+            if base.endswith('.py'):
+                base = base[:-3]
+            test_file = os.path.join(os.path.dirname(file_path), f"test_{base}.py")
             with open(test_file, 'w', encoding='utf-8') as f:
                 for item in exec_res:
-                    f.write(f"# Tests for {item['name']}\n{item['test_code']}\n\n")
+                    clean_code = self._clean_test_code(item['test_code'])
+                    f.write(f"# Tests for {item['name']}\n{clean_code}\n\n")
             if verbose:
                 print(f"Wrote generated tests to {test_file}")
         return 'done'

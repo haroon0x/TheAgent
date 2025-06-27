@@ -1,6 +1,6 @@
 import argparse
-from flow import create_doc_agent_flow
-from utils.call_llm import AlchemistAIProxy
+from theagent.flow import create_doc_agent_flow
+from theagent.utils.call_llm import AlchemistAIProxy
 
 class Args:
     pass

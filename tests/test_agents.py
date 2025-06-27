@@ -1,10 +1,10 @@
 import sys
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src')))
 
 import tempfile
 import os
-from nodes import DocAgentNode, SummaryAgentNode, TypeAnnotationAgentNode, MigrationAgentNode, TestGenerationAgentNode, BugDetectionAgentNode, RefactorCodeAgentNode
+from theagent.nodes import DocAgentNode, SummaryAgentNode, TypeAnnotationAgentNode, MigrationAgentNode, TestGenerationAgentNode, BugDetectionAgentNode, RefactorCodeAgentNode
 
 class DummyArgs:
     def __init__(self, file, output='console', llm='dummy', no_confirm=True, verbose=False, migration_target='Python 3'):

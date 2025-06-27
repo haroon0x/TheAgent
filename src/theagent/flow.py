@@ -1,5 +1,5 @@
 from pocketflow import Flow
-from nodes import create_doc_agent_nodes
+from theagent.nodes import create_doc_agent_nodes
 
 def create_doc_agent_flow(args, llm_proxy):
     """Create and return the documentation agent flow."""
