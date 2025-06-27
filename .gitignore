@@ -10,7 +10,7 @@ build/
 out/
 *.pyc
 __pycache__/
-
+gemini-cli-main
 # Environment files
 .env
 .env.local

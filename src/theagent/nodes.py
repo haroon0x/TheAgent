@@ -355,72 +355,145 @@ class OrchestratorAgentNode(BaseAgentNode):
     def prep(self, shared):
         # Get the user's instruction
         instruction = getattr(self.args, 'instruction', None)
-        if not instruction:
-            raise ValueError("No instruction provided for orchestrator agent.")
         shared['instruction'] = instruction
         return instruction
 
     def exec(self, instruction):
-        # Use the LLM to map the instruction to a list of agent types
-        # For simplicity, we use a strong prompt and expect a YAML or JSON list of agent types
+        # Use the LLM to map the instruction to a list of agent types or answer
         from langchain_openai import ChatOpenAI
         system_prompt = (
-            "You are an expert agent orchestrator for a code analysis system. "
-            "Given a user instruction, output a Python list of agent types (from: 'doc', 'summary', 'type', 'migration', 'test', 'bug', 'refactor') "
-            "that should be run, in order, to fulfill the instruction. "
-            "Only output the list, nothing else."
+            "You are TheAgent, an expert developer assistant and orchestrator for code analysis and automation.\n"
+            "You can run the following specialized agents:\n"
+            "- 'doc': Generate Google-style docstrings for all functions in a Python file.\n"
+            "- 'summary': Summarize the main purpose and structure of a Python file.\n"
+            "- 'type': Suggest type annotations for all functions.\n"
+            "- 'migration': Migrate code to a new version or framework (e.g., Python 3, TensorFlow 2).\n"
+            "- 'test': Generate pytest-style unit tests for the code.\n"
+            "- 'bug': Find bugs and suggest fixes.\n"
+            "- 'refactor': Refactor code for readability and maintainability.\n"
+            "\n"
+            "Given a user instruction, output a Python list of agent types (from the above) that should be run, in order, to fulfill the instruction.\n"
+            "If the instruction is a general question or not related to code, respond with a string answer instead of a list.\n"
+            "If the instruction is ambiguous, ask the user for clarification.\n"
+            "\n"
+            "Examples:\n"
+            "Instruction: 'Summarize and generate docstrings.'\n"
+            "Output: ['summary', 'doc']\n"
+            "Instruction: 'Find bugs and refactor.'\n"
+            "Output: ['bug', 'refactor']\n"
+            "Instruction: 'What is the meaning of life?'\n"
+            "Output: 'The meaning of life is subjective, but many say it is to find happiness and purpose.'\n"
+            "Instruction: 'Can you help me?'\n"
+            "Output: 'Of course! Please tell me what you need help with.'\n"
+            "\n"
+            "Output Format:\n"
+            "- If the instruction is about code, output a valid Python list, e.g. ['doc', 'test', 'bug']. No explanations, markdown, or extra text.\n"
+            "- If the instruction is a general question, output a string answer.\n"
+            "- If you need clarification, output a string question for the user.\n"
         )
-        prompt = f"User instruction: {instruction}\nOutput the list of agent types to run."
+        prompt = f"User instruction: {instruction}\nOutput the list of agent types to run or answer the question."
         llm = ChatOpenAI(
             api_key=self.llm_proxy.api_key,
             model=getattr(self.args, 'llm', 'alchemyst-ai/alchemyst-c1'),
             base_url=self.llm_proxy.base_url,
             temperature=0.1,
             top_p=0.9,
-            max_tokens=128,
+            max_tokens=256,
         )
         result = llm.invoke([
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ])
-        # Try to parse the output as a Python list
         import ast as _ast
+        # Try to parse as a Python list, otherwise treat as a string answer
+        content = result.content.strip()
         try:
-            agent_list = _ast.literal_eval(result.content.strip())
-            if not isinstance(agent_list, list):
-                raise ValueError
+            agent_list = _ast.literal_eval(content)
+            if isinstance(agent_list, list):
+                return agent_list
         except Exception:
-            raise ValueError(f"Could not parse agent list from LLM output: {result.content}")
-        return agent_list
+            pass
+        # If not a list, return the string answer
+        return content
 
     def post(self, shared, prep_res, exec_res):
-        # exec_res is the list of agent types to run
-        agent_types = exec_res
-        file_path = self.args.file
-        results = {}
-        for agent_type in agent_types:
-            # Create a new args object for each agent
-            import copy
-            agent_args = copy.deepcopy(self.args)
-            agent_args.agent = agent_type
-            # For migration, pass migration_target
-            node = create_doc_agent_nodes(agent_args, self.llm_proxy)
-            shared_local = {}
-            # For doc, type, test, run the full flow; for summary, bug, refactor, just print/return
-            try:
-                if hasattr(node, 'prep') and hasattr(node, 'exec') and hasattr(node, 'post'):
-                    prep_res = node.prep(shared_local)
-                    exec_res = node.exec(prep_res)
-                    post_res = node.post(shared_local, prep_res, exec_res)
-                    results[agent_type] = post_res
-                else:
-                    results[agent_type] = node.run(shared_local)
-            except Exception as e:
-                results[agent_type] = f"Error: {e}"
-        print("\n=== Orchestrator Summary ===\n")
-        for agent_type in agent_types:
-            print(f"Agent '{agent_type}' completed. Result: {results[agent_type]}")
-        return 'done'
+        # If exec_res is a string, treat it as a direct answer (general chat)
+        if isinstance(exec_res, str):
+            if not exec_res.strip():
+                return "I'm sorry, I didn't understand that. Please rephrase your question or instruction."
+            return exec_res
+
+        # If exec_res is a list, validate agent types
+        if isinstance(exec_res, list):
+            valid_agents = {'doc', 'summary', 'type', 'migration', 'test', 'bug', 'refactor'}
+            filtered = [a for a in exec_res if a in valid_agents]
+            invalid = [a for a in exec_res if a not in valid_agents]
+            response_lines = []
+
+            if not filtered and invalid:
+                # If all are invalid, treat as a chat response
+                return " ".join(str(x) for x in exec_res)
+
+            if invalid:
+                response_lines.append(f"Warning: The following actions are not supported and will be ignored: {', '.join(invalid)}")
+
+            file_path = getattr(self.args, 'file', None)
+            if not file_path and any(a in valid_agents for a in filtered):
+                response_lines.append("This action requires a file. Please provide one with --file or upload it.")
+                return "\n".join(response_lines)
+
+            # Run valid agent nodes
+            results = {}
+            for agent_type in filtered:
+                import copy
+                agent_args = copy.deepcopy(self.args)
+                agent_args.agent = agent_type
+                node = create_doc_agent_nodes(agent_args, self.llm_proxy)
+                shared_local = {}
+                try:
+                    if hasattr(node, 'prep') and hasattr(node, 'exec') and hasattr(node, 'post'):
+                        prep_res = node.prep(shared_local)
+                        exec_res = node.exec(prep_res)
+                        post_res = node.post(shared_local, prep_res, exec_res)
+                        results[agent_type] = post_res
+                        response_lines.append(f"Agent '{agent_type}' completed.")
+                    else:
+                        results[agent_type] = node.run(shared_local)
+                        response_lines.append(f"Agent '{agent_type}' completed.")
+                except Exception as e:
+                    results[agent_type] = f"Error: {e}"
+                    response_lines.append(f"Agent '{agent_type}' failed: {e}")
+
+            if response_lines:
+                return "\n".join(response_lines)
+            else:
+                return "All requested agent actions completed."
+
+        # Fallback: unknown output
+        return "I'm sorry, I didn't understand that. Please rephrase your question or instruction."
+
+class UserApprovalNode(Node):
+    def __init__(self, key_to_review, message="Please review the result below:", title="User Approval"):
+        super().__init__()
+        self.key_to_review = key_to_review
+        self.message = message
+        self.title = title
+
+    def prep(self, shared):
+        return shared.get(self.key_to_review, "")
+
+    def exec(self, value):
+        print(f"\n=== {self.title} ===\n")
+        print(self.message)
+        print(value)
+        resp = input("Is this result good? (y/n): ").strip().lower()
+        return resp
+
+    def post(self, shared, prep_res, exec_res):
+        if exec_res == "y":
+            return "approved"
+        else:
+            return "refine"
 
 def create_doc_agent_nodes(args, llm_proxy):
     agent_type = getattr(args, 'agent', 'doc')
