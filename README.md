@@ -16,41 +16,41 @@ Built on a modular, agentic architecture, TheAgent leverages PocketFlow for flex
 
 ```mermaid
 flowchart TD
-    U["User (CLI or Chat Mode)"]
-    CLI["TheAgent CLI (main.py)"]
-    Config["Config Loader & Validator"]
-    ModeSwitch{{"Mode Selection"}}
-    Orchestrator["Orchestrator Agent"]
+    U["User"]
+    CLI["CLI"]
+    Config["Config"]
+    ModeSwitch{{"Mode"}}
+    Orchestrator["Orchestrator"]
     AgentSelector["Agent Selector"]
-    AgentNodes["Agent Nodes"]
-    DocNode["Docstring Agent"]
-    SummaryNode["Summary Agent"]
-    TypeNode["Type Annotation Agent"]
-    MigrationNode["Migration Agent"]
-    TestNode["Test Generation Agent"]
-    BugNode["Bug Detection Agent"]
-    RefactorNode["Refactor Agent"]
-    Parser["Python AST Parser"]
-    AgentLogic["Agent Logic (Prompt Builder, etc.)"]
-    LLMProxy["LLM Proxy (AlchemistAIProxy)"]
-    LLM["Alchemist AI (LLM)"]
-    OutputHandler["Output Handler"]
-    FileWriter["File Writer"]
-    Console["Console Output"]
-    Backup["Backup Manager"]
+    AgentNodes["Agents"]
+    DocNode["Doc"]
+    SummaryNode["Summary"]
+    TypeNode["Type"]
+    MigrationNode["Migrate"]
+    TestNode["Test"]
+    BugNode["Bug"]
+    RefactorNode["Refactor"]
+    Parser["Parser"]
+    AgentLogic["Logic"]
+    LLMProxy["LLM Proxy"]
+    LLM["LLM"]
+    OutputHandler["Output"]
+    FileWriter["File"]
+    Console["Console"]
+    Backup["Backup"]
 
     %% User interaction
-    U -->|Command, File, Options, Instruction| CLI
-    CLI -->|Parse Args & Config| Config
-    CLI -->|Select Mode| ModeSwitch
-    CLI -->|Show Progress/Errors| U
-    Config -->|Config/Env| CLI
+    U -->|"Command/Instruction"| CLI
+    CLI -->|"Args/Config"| Config
+    CLI -->|"Mode"| ModeSwitch
+    CLI -->|"Progress/Errors"| U
+    Config -->|"Env"| CLI
 
     %% Mode selection
     ModeSwitch -- "Orchestrator" --> Orchestrator
-    ModeSwitch -- "Direct Agent" --> AgentSelector
-    Orchestrator -->|Parse Instruction| AgentSelector
-    AgentSelector -->|Dispatch| AgentNodes
+    ModeSwitch -- "Direct" --> AgentSelector
+    Orchestrator -->|"Instruction"| AgentSelector
+    AgentSelector -->|"Dispatch"| AgentNodes
 
     %% Agent nodes
     AgentNodes --> DocNode
@@ -62,48 +62,63 @@ flowchart TD
     AgentNodes --> RefactorNode
 
     %% Agent workflow
-    DocNode -->|Extract Functions| Parser
-    SummaryNode -->|Extract Functions| Parser
-    TypeNode -->|Extract Functions| Parser
-    MigrationNode -->|Extract Functions| Parser
-    TestNode -->|Extract Functions| Parser
-    BugNode -->|Extract Functions| Parser
-    RefactorNode -->|Extract Functions| Parser
+    DocNode -->|"Parse"| Parser
+    SummaryNode -->|"Parse"| Parser
+    TypeNode -->|"Parse"| Parser
+    MigrationNode -->|"Parse"| Parser
+    TestNode -->|"Parse"| Parser
+    BugNode -->|"Parse"| Parser
+    RefactorNode -->|"Parse"| Parser
 
-    Parser -->|Function Info| AgentLogic
-    AgentLogic -->|LLM Request| LLMProxy
-    LLMProxy -->|API Call| LLM
-    LLM -->|LLM Response| LLMProxy
-    LLMProxy -->|Parsed Output| AgentLogic
-    AgentLogic -->|Result| OutputHandler
+    Parser -->|"Info"| AgentLogic
+    AgentLogic -->|"LLM Req"| LLMProxy
+    LLMProxy -->|"API"| LLM
+    LLM -->|"Resp"| LLMProxy
+    LLMProxy -->|"Output"| AgentLogic
+    AgentLogic -->|"Result"| OutputHandler
 
     %% Output
-    OutputHandler -->|Write/Display| FileWriter
-    OutputHandler -->|Write/Display| Console
-    OutputHandler -->|Write/Display| Backup
-    FileWriter -->|Modified File| U
-    Console -->|Printed Result| U
-    Backup -->|Backup File| U
+    OutputHandler -->|"File"| FileWriter
+    OutputHandler -->|"Console"| Console
+    OutputHandler -->|"Backup"| Backup
+    FileWriter -->|"Modified"| U
+    Console -->|"Printed"| U
+    Backup -->|"Backup"| U
 
-    %% Styling
-    classDef agent fill:#ffd,stroke:#333,stroke-width:2;
-    class DocNode,SummaryNode,TypeNode,MigrationNode,TestNode,BugNode,RefactorNode agent;
-    classDef output fill:#fcf,stroke:#333,stroke-width:2;
-    class FileWriter,Console,Backup,OutputHandler output;
-    classDef llm fill:#eef,stroke:#333,stroke-width:2;
-    class LLMProxy,LLM llm;
-    classDef logic fill:#eef,stroke:#333,stroke-width:2;
-    class AgentLogic,Parser logic;
-    classDef infra fill:#bbf,stroke:#333,stroke-width:2;
-    class CLI,Config infra;
-    classDef user fill:#f9f,stroke:#333,stroke-width:2;
+    %% Styling for visibility
+    classDef user fill:#222,color:#fff,stroke:#000,stroke-width:3,font-size:18px;
+    classDef cli fill:#0057b7,color:#fff,stroke:#000,stroke-width:3,font-size:18px;
+    classDef config fill:#ffb300,color:#000,stroke:#000,stroke-width:3,font-size:16px;
+    classDef mode fill:#6a1b9a,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef orchestrator fill:#388e3c,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef selector fill:#0288d1,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef agents fill:#ffd600,color:#000,stroke:#000,stroke-width:3,font-size:16px;
+    classDef agent fill:#fff176,color:#000,stroke:#000,stroke-width:2,font-size:15px;
+    classDef parser fill:#ff7043,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef logic fill:#8d6e63,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef llmproxy fill:#1976d2,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef llm fill:#c51162,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef output fill:#43a047,color:#fff,stroke:#000,stroke-width:3,font-size:16px;
+    classDef file fill:#fff,color:#000,stroke:#000,stroke-width:2,font-size:15px;
+    classDef console fill:#fff,color:#000,stroke:#000,stroke-width:2,font-size:15px;
+    classDef backup fill:#fff,color:#000,stroke:#000,stroke-width:2,font-size:15px;
+
     class U user;
-    classDef selector fill:#bdf,stroke:#333,stroke-width:2;
-    class AgentSelector selector;
-    classDef orchestrator fill:#bfb,stroke:#333,stroke-width:2;
-    class Orchestrator orchestrator;
-    classDef mode fill:#eee,stroke:#333,stroke-width:2;
+    class CLI cli;
+    class Config config;
     class ModeSwitch mode;
+    class Orchestrator orchestrator;
+    class AgentSelector selector;
+    class AgentNodes agents;
+    class DocNode,SummaryNode,TypeNode,MigrationNode,TestNode,BugNode,RefactorNode agent;
+    class Parser parser;
+    class AgentLogic logic;
+    class LLMProxy llmproxy;
+    class LLM llm;
+    class OutputHandler output;
+    class FileWriter file;
+    class Console console;
+    class Backup backup;
 ```
 
 ## Overview
@@ -185,4 +200,4 @@ python main.py --file my_module.py --output in-place --llm alchemyst-ai/alchemys
 | `--llm <model_name>`            | LLM model to use (default: `alchemyst-ai/alchemyst-c1`)                     | `--llm alchemyst-ai/alchemyst-c1`                  |
 | `--no-confirm`                  | Skip confirmation prompts for destructive actions (e.g., in-place changes)   | `--no-confirm`                                     |
 | `--verbose`                     | Print detailed progress                                                     | `--verbose`                                        |
-| `--agent <type>`                | Agent type: `doc`, `summary`, `type`, `migration`, `test`, `bug`, `refactor`
+| `--agent <type>`                | Agent type: `
