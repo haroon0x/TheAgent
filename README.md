@@ -1,9 +1,50 @@
 [![CI](https://github.com/haroon0x/TheAgent/actions/workflows/ci.yml/badge.svg)](https://github.com/haroon0x/TheAgent/actions/workflows/ci.yml)
 
-# The Code Documentation Agent
+# TheAgent
+
+> TheAgent: Your all-in-one Python CLI code agent for docstrings, summaries, migration, tests, bug detection, and more—powered by PocketFlow and Alchemist AI.
+
+**TheAgent** is a powerful, extensible command-line tool that automates Python code understanding and transformation tasks. With a single CLI, you can:
+- Generate Google-style docstrings, summaries, and type annotations
+- Migrate code to new versions or libraries
+- Detect bugs, refactor code, and generate tests
+- Orchestrate multi-step code workflows using natural language instructions
+
+Built on a modular, agentic architecture, TheAgent leverages PocketFlow for flexible node orchestration and Alchemist AI for LLM-powered code analysis. Its design makes it easy to add new agent types and integrate with any LLM backend.
+
+## Architecture Overview
+
+```mermaid
+flowchart TD
+    subgraph User
+        U["User (CLI)"]
+    end
+    U -->|"Command & Options"| CLI["TheAgent CLI (main.py)"]
+    CLI -->|"Parse Args"| Orchestrator["Orchestrator Agent (Node)"]
+    Orchestrator -->|"Instruction/Agent Selection"| AgentNodes["Agent Nodes (docstring, summary, type, migration, test, bug, refactor)"]
+    AgentNodes -->|"LLM Calls"| LLMProxy["LLM Proxy (AlchemistAIProxy)"]
+    LLMProxy -->|"LLM API"| LLM["Alchemist AI (LLM)"]
+    AgentNodes -->|"Results"| Output["Output Handler (console, file, in-place)"]
+    Output -->|"Results"| U
+    CLI -->|"Show Progress/Errors"| U
+    style U fill:#f9f,stroke:#333,stroke-width:2
+    style CLI fill:#bbf,stroke:#333,stroke-width:2
+    style Orchestrator fill:#bfb,stroke:#333,stroke-width:2
+    style AgentNodes fill:#ffd,stroke:#333,stroke-width:2
+    style LLMProxy fill:#eef,stroke:#333,stroke-width:2
+    style LLM fill:#eee,stroke:#333,stroke-width:2
+    style Output fill:#fcf,stroke:#333,stroke-width:2
+```
 
 ## Overview
-This project provides an intelligent agent that automates the creation of high-quality, Google-style docstrings for Python functions. It uses PocketFlow for agent orchestration and Alchemist AI (via a proxy) for LLM-powered docstring generation.
+This project provides an intelligent agent called **TheAgent** that automates the creation of high-quality, Google-style docstrings for Python functions and much more. It uses PocketFlow for agent orchestration and Alchemist AI (via a proxy) for LLM-powered code analysis and generation.
+
+**Why TheAgent?**
+- Flexible: Supports docstring, summary, type annotation, migration, test generation, bug detection, refactor, and orchestrator agents.
+- Brandable: TheAgent is designed to be extended for any code automation or analysis task.
+- User-centric: CLI and chat modes for both power users and beginners.
+
+*TheAgent is a strong, brandable name chosen for its flexibility and future-proofing. You can extend it to any code automation or agentic workflow you need.*
 
 ## Extensibilty - To add a new agent:
 - Add a method to AlchemistAIProxy.
@@ -74,101 +115,4 @@ python main.py --file my_module.py --output in-place --llm alchemyst-ai/alchemys
 | `--llm <model_name>`            | LLM model to use (default: `alchemyst-ai/alchemyst-c1`)                     | `--llm alchemyst-ai/alchemyst-c1`                  |
 | `--no-confirm`                  | Skip confirmation prompts for destructive actions (e.g., in-place changes)   | `--no-confirm`                                     |
 | `--verbose`                     | Print detailed progress                                                     | `--verbose`                                        |
-| `--agent <type>`                | Agent type: `doc`, `summary`, `type`, `migration`, `test`, `bug`, `refactor`| `--agent doc`                                      |
-| `--migration-target <target>`   | Migration target for migration agent (e.g., `"Python 3"`)                  | `--migration-target "Python 3"`                  |
-
-**Note:**
-- You can combine any arguments in any order.
-- Flags like `--no-confirm` and `--verbose` do not require a value—just include them to activate.
-
-### Example Commands for Each Agent
-
-**Docstring Agent (in-place, skip confirmation):**
-```sh
-python main.py --file my_module.py --agent doc --output in-place --no-confirm
-```
-
-**Summary Agent (console, verbose):**
-```sh
-python main.py --file my_module.py --agent summary --verbose
-```
-
-**Type Annotation Agent:**
-```sh
-python main.py --file my_module.py --agent type
-```
-
-**Migration Agent (to Python 3, new file):**
-```sh
-python main.py --file my_module.py --agent migration --migration-target "Python 3" --output new-file
-```
-
-**Test Generation Agent:**
-```sh
-python main.py --file my_module.py --agent test --output new-file
-```
-
-**Bug Detection Agent:**
-```sh
-python main.py --file my_module.py --agent bug
-```
-
-**Refactor Code Agent (in-place, verbose):**
-```sh
-python main.py --file my_module.py --agent refactor --output in-place --verbose
-```
-
-## Orchestrator Agent
-
-The Orchestrator Agent lets you use natural language to control the system. Just tell it what you want (e.g., "Add docstrings and generate tests"), and it will decide which agents to run and in what order.
-
-**Usage:**
-```sh
-python main.py --file my_module.py --agent orchestrator --instruction "Add docstrings and generate tests"
-```
-
-If you omit `--instruction`, you will be prompted to enter your instruction interactively:
-```sh
-python main.py --file my_module.py --agent orchestrator
-# Enter your instruction for the orchestrator agent: Add docstrings and generate tests
-```
-
-The orchestrator will:
-- Parse your instruction
-- Decide which agent(s) to run (e.g., doc, test, etc.)
-- Run them in order and print a summary
-
----
-
-## Future: Interactive Chat with the Orchestrator
-
-A future version could allow you to chat interactively with the orchestrator agent, enabling multi-turn workflows and more dynamic control. If you want this feature, let us know or contribute!
-
----
-
-## Project Structure
-- `main.py`: Main entrypoint and CLI
-- `nodes.py`: All agent node classes
-- `flow.py`: Flow creation logic
-- `utils/call_llm.py`: AlchemistAIProxy for LLM calls
-- `requirements.txt`, `pyproject.toml`: Dependency management
-- `tests/`: Unit and integration tests
-
-## Testing & Continuous Integration
-
-This project uses **pytest** for testing and **GitHub Actions** for CI.
-
-### Run tests locally
-```sh
-pytest tests/test_agents.py
-```
-Or run all tests:
-```sh
-pytest tests/
-```
-
-### CI
-A GitHub Actions workflow runs all tests on every push and pull request. See `.github/workflows/ci.yml`.
-
-## License
-MIT
+| `--agent <type>`                | Agent type: `doc`, `

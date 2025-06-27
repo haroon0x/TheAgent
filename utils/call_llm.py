@@ -162,18 +162,18 @@ class AlchemistAIProxy:
         )
         prompt = "Find bugs in this Python code:\n" + code
         try:
-            llm = ChatOpenAI(
+    llm = ChatOpenAI(
                 api_key=self.api_key,
                 model=model_name,
                 base_url=self.base_url,
                 temperature=0.2,
                 top_p=0.9,
                 max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
+    )
+    result = llm.invoke([
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": prompt}
+    ])
             return result.content.strip()
         except Exception as e:
             print(f"[AlchemistAIProxy] LLM API error: {e}")
