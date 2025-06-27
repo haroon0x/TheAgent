@@ -16,24 +16,94 @@ Built on a modular, agentic architecture, TheAgent leverages PocketFlow for flex
 
 ```mermaid
 flowchart TD
-    subgraph User
-        U["User (CLI)"]
-    end
-    U -->|"Command & Options"| CLI["TheAgent CLI (main.py)"]
-    CLI -->|"Parse Args"| Orchestrator["Orchestrator Agent (Node)"]
-    Orchestrator -->|"Instruction/Agent Selection"| AgentNodes["Agent Nodes (docstring, summary, type, migration, test, bug, refactor)"]
-    AgentNodes -->|"LLM Calls"| LLMProxy["LLM Proxy (AlchemistAIProxy)"]
-    LLMProxy -->|"LLM API"| LLM["Alchemist AI (LLM)"]
-    AgentNodes -->|"Results"| Output["Output Handler (console, file, in-place)"]
-    Output -->|"Results"| U
-    CLI -->|"Show Progress/Errors"| U
-    style U fill:#f9f,stroke:#333,stroke-width:2
-    style CLI fill:#bbf,stroke:#333,stroke-width:2
-    style Orchestrator fill:#bfb,stroke:#333,stroke-width:2
-    style AgentNodes fill:#ffd,stroke:#333,stroke-width:2
-    style LLMProxy fill:#eef,stroke:#333,stroke-width:2
-    style LLM fill:#eee,stroke:#333,stroke-width:2
-    style Output fill:#fcf,stroke:#333,stroke-width:2
+    U["User (CLI or Chat Mode)"]
+    CLI["TheAgent CLI (main.py)"]
+    Config["Config Loader & Validator"]
+    ModeSwitch{{"Mode Selection"}}
+    Orchestrator["Orchestrator Agent"]
+    AgentSelector["Agent Selector"]
+    AgentNodes["Agent Nodes"]
+    DocNode["Docstring Agent"]
+    SummaryNode["Summary Agent"]
+    TypeNode["Type Annotation Agent"]
+    MigrationNode["Migration Agent"]
+    TestNode["Test Generation Agent"]
+    BugNode["Bug Detection Agent"]
+    RefactorNode["Refactor Agent"]
+    Parser["Python AST Parser"]
+    AgentLogic["Agent Logic (Prompt Builder, etc.)"]
+    LLMProxy["LLM Proxy (AlchemistAIProxy)"]
+    LLM["Alchemist AI (LLM)"]
+    OutputHandler["Output Handler"]
+    FileWriter["File Writer"]
+    Console["Console Output"]
+    Backup["Backup Manager"]
+
+    %% User interaction
+    U -->|Command, File, Options, Instruction| CLI
+    CLI -->|Parse Args & Config| Config
+    CLI -->|Select Mode| ModeSwitch
+    CLI -->|Show Progress/Errors| U
+    Config -->|Config/Env| CLI
+
+    %% Mode selection
+    ModeSwitch -- "Orchestrator" --> Orchestrator
+    ModeSwitch -- "Direct Agent" --> AgentSelector
+    Orchestrator -->|Parse Instruction| AgentSelector
+    AgentSelector -->|Dispatch| AgentNodes
+
+    %% Agent nodes
+    AgentNodes --> DocNode
+    AgentNodes --> SummaryNode
+    AgentNodes --> TypeNode
+    AgentNodes --> MigrationNode
+    AgentNodes --> TestNode
+    AgentNodes --> BugNode
+    AgentNodes --> RefactorNode
+
+    %% Agent workflow
+    DocNode -->|Extract Functions| Parser
+    SummaryNode -->|Extract Functions| Parser
+    TypeNode -->|Extract Functions| Parser
+    MigrationNode -->|Extract Functions| Parser
+    TestNode -->|Extract Functions| Parser
+    BugNode -->|Extract Functions| Parser
+    RefactorNode -->|Extract Functions| Parser
+
+    Parser -->|Function Info| AgentLogic
+    AgentLogic -->|LLM Request| LLMProxy
+    LLMProxy -->|API Call| LLM
+    LLM -->|LLM Response| LLMProxy
+    LLMProxy -->|Parsed Output| AgentLogic
+    AgentLogic -->|Result| OutputHandler
+
+    %% Output
+    OutputHandler -->|Write/Display| FileWriter
+    OutputHandler -->|Write/Display| Console
+    OutputHandler -->|Write/Display| Backup
+    FileWriter -->|Modified File| U
+    Console -->|Printed Result| U
+    Backup -->|Backup File| U
+
+    %% Styling
+    classDef agent fill:#ffd,stroke:#333,stroke-width:2;
+    class DocNode,SummaryNode,TypeNode,MigrationNode,TestNode,BugNode,RefactorNode agent;
+    classDef output fill:#fcf,stroke:#333,stroke-width:2;
+    class FileWriter,Console,Backup,OutputHandler output;
+    classDef llm fill:#eef,stroke:#333,stroke-width:2;
+    class LLMProxy,LLM llm;
+    classDef logic fill:#eef,stroke:#333,stroke-width:2;
+    class AgentLogic,Parser logic;
+    classDef infra fill:#bbf,stroke:#333,stroke-width:2;
+    class CLI,Config infra;
+    classDef user fill:#f9f,stroke:#333,stroke-width:2;
+    class U user;
+    classDef selector fill:#bdf,stroke:#333,stroke-width:2;
+    class AgentSelector selector;
+    classDef orchestrator fill:#bfb,stroke:#333,stroke-width:2;
+    class Orchestrator orchestrator;
+    classDef mode fill:#eee,stroke:#333,stroke-width:2;
+    class ModeSwitch mode;
 ```
 
 ## Overview
@@ -115,4 +185,4 @@ python main.py --file my_module.py --output in-place --llm alchemyst-ai/alchemys
 | `--llm <model_name>`            | LLM model to use (default: `alchemyst-ai/alchemyst-c1`)                     | `--llm alchemyst-ai/alchemyst-c1`                  |
 | `--no-confirm`                  | Skip confirmation prompts for destructive actions (e.g., in-place changes)   | `--no-confirm`                                     |
 | `--verbose`                     | Print detailed progress                                                     | `--verbose`                                        |
-| `--agent <type>`                | Agent type: `doc`, `
+| `--agent <type>`                | Agent type: `doc`, `summary`, `type`, `migration`, `test`, `bug`, `refactor`
