@@ -314,6 +314,11 @@ class TypeAnnotationAgentNode(BaseAgentNode):
         return "default"
 
 class OrchestratorAgentNode(Node):
+    def __init__(self, args, llm_proxy):
+        super().__init__()
+        self.args = args
+        self.llm_proxy = llm_proxy
+    
     def prep(self, shared):
         # Get the user's instruction
         user_input = shared.get('user_input', '')

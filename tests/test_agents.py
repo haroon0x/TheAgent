@@ -448,7 +448,7 @@ def test_refactor_code_agent_node():
         content = f.read()
         assert '# refactored' in content
     os.remove(tf_name)
-    os.remove(new_file)
+    os.remove(new_file) 
 
 def test_refactor_code_agent_node_with_complex_code(sample_python_code):
     """Test RefactorCodeAgentNode with complex Python code."""
