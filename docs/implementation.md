@@ -1,68 +1,292 @@
-# Implementation Plan: Improvements from Chat Interaction
+# TheAgent Enhanced Implementation
 
-## Context
-Recent chat interaction:
-- User: hi
-- TheAgent: Of course! Please tell me what you need help with.
-- User: can you delete the main.py
-- TheAgent: The instruction is not clear on what action needs to be taken regarding the main.py file. Please provide more details or confirm if you want the code analyzed or removed.
-- User: rmoved
-- TheAgent: The instruction "rmoved" is unclear. Could you please provide more context or clarify your request?
-- User: can you update script.py
-- TheAgent: This action requires a file. Please provide one with --file or upload it.
+## Overview
 
-## Features and Improvements to Implement
+TheAgent has been enhanced with advanced features for better user experience, including improved intent recognition, clarification flows, file management actions, user feedback, safety checks, and file context awareness.
 
-### 1. **Intent Recognition for File Operations**
-- Detect user intent for file actions: delete, update, rename, move, etc.
-- Use LLM or regex to classify intent from natural language ("delete main.py", "remove file", "update script.py").
-- Map intent to safe, explicit actions.
+## New Features
 
-### 2. **Clarification and Confirmation Flows**
-- If a destructive action is detected (delete, overwrite), ask for explicit confirmation ("Are you sure you want to delete main.py? (y/n)").
-- If the instruction is ambiguous, ask a clarifying question ("Do you want to analyze or remove main.py?").
+### 1. Enhanced Intent Recognition
 
-### 3. **File Management Actions**
-- Implement agent nodes for file operations:
-  - Delete file
-  - Rename/move file
-  - Update/overwrite file
-- Integrate these nodes into the orchestrator and allow LLM to select them.
+The `IntentRecognitionNode` provides sophisticated intent analysis that can:
 
-### 4. **User Feedback and Error Handling**
-- Provide clear, actionable feedback for unsupported or ambiguous requests.
-- Suggest next steps ("You can say: 'delete main.py', 'summarize script.py', or 'update script.py'").
+- **Understand Context**: Considers chat history and current context
+- **Handle Ambiguity**: Requests clarification when instructions are unclear
+- **Support Multiple Actions**: Can chain multiple agents for complex tasks
+- **File Operations**: Recognizes file management commands
+- **General Questions**: Provides direct answers for non-code questions
 
-### 5. **Natural Language Understanding for Ambiguous Requests**
-- Use LLM to rephrase or clarify unclear user input.
-- If the user input is a typo or incomplete ("rmoved"), suggest corrections or ask for clarification.
+**Example Usage:**
+```bash
+# Chat mode with enhanced intent recognition
+python -m theagent --chat
 
-### 6. **Suggestions for Next Actions**
-- After completing an action, suggest related actions ("Would you like to see a summary of the file before deleting it?").
+# The system will understand these commands:
+> list files
+> read main.py
+> generate docstrings for main.py
+> what is Python?
+> help me with this function
+```
 
-### 7. **Security and Safety Checks**
-- For destructive actions (delete, overwrite), require confirmation.
-- Optionally, implement a "trash" or undo feature for deleted files.
-- Log all file operations for auditability.
+### 2. Clarification Flows
 
-### 8. **File Context Awareness**
-- If the user refers to a file not provided with --file, prompt to upload or specify the file.
-- Allow the user to select from available files in the workspace.
+The `ClarificationNode` handles ambiguous requests by:
 
----
+- **Asking Specific Questions**: Requests missing information
+- **Maintaining Context**: Preserves conversation history
+- **Guiding Users**: Provides examples of what information is needed
+- **Looping Back**: Returns to intent recognition after clarification
 
-## Implementation Steps
-1. Add intent recognition logic to the orchestrator (LLM or rule-based fallback).
-2. Implement agent nodes for file management (delete, rename, update).
-3. Add confirmation and clarification flows for destructive/ambiguous actions.
-4. Enhance user feedback and error messages.
-5. Add suggestions for next actions after each operation.
-6. Implement safety checks and logging for file operations.
-7. Update documentation and help messages to reflect new capabilities.
+**Example Flow:**
+```
+User: "Summarize my code"
+Agent: 🤔 Which file would you like me to summarize?
+User: "main.py"
+Agent: [Proceeds with summarization]
+```
 
----
+### 3. File Management Actions
+
+The `FileManagementNode` provides comprehensive file operations:
+
+- **List Files**: Shows available Python and other files
+- **Read Files**: Displays file contents
+- **Create Files**: Generates new Python files
+- **Delete Files**: Removes files with confirmation
+
+**Supported Commands:**
+- `list files` / `ls` / `dir`
+- `read filename.py` / `open filename.py` / `view filename.py`
+- `create newfile.py` / `new newfile.py`
+- `delete oldfile.py` / `remove oldfile.py`
+
+### 4. Safety Checks
+
+The `SafetyCheckNode` prevents accidental data loss by:
+
+- **Confirming Destructive Operations**: Asks for confirmation before file modifications
+- **Creating Backups**: Automatically backs up files before in-place modifications
+- **Warning Users**: Provides clear warnings about potential consequences
+- **Skippable**: Can be bypassed with `--no-confirm` flag
+
+**Safety Messages:**
+- ⚠️ File modifications
+- ⚠️ File deletions
+- ⚠️ Code refactoring
+- ⚠️ Version migrations
+
+### 5. Context Awareness
+
+The `ContextAwarenessNode` maintains conversation context by:
+
+- **Tracking Current Directory**: Knows where files are located
+- **Remembering Recent Actions**: Maintains history of recent operations
+- **File Availability**: Lists available Python files
+- **Verbose Mode**: Shows context information when `--verbose` is used
+
+### 6. Error Handling
+
+The `ErrorHandlingNode` provides robust error recovery by:
+
+- **Categorizing Errors**: Identifies different types of errors
+- **User-Friendly Messages**: Provides clear, actionable error messages
+- **Recovery Suggestions**: Offers specific solutions for common problems
+- **Retry Options**: Allows users to retry failed operations
+
+**Error Categories:**
+- File not found
+- Permission denied
+- Syntax errors
+- LLM service errors
+- Network errors
+- Unknown errors
+
+## Enhanced Flows
+
+### Simple Enhanced Flow
+
+The `create_simple_enhanced_flow` provides a streamlined experience:
+
+```
+Context Awareness → Intent Recognition → Agent Execution → Error Handling
+```
+
+**Features:**
+- Basic intent recognition
+- Clarification loops
+- Error recovery
+- Context maintenance
+
+### Full Enhanced Flow
+
+The `create_enhanced_agent_flow` provides maximum safety and control:
+
+```
+Context → Intent → Safety Check → Agent → Error Handling → User Approval
+```
+
+**Features:**
+- All safety checks
+- User approval for results
+- Comprehensive error handling
+- File management integration
+
+## Usage Examples
+
+### Basic Chat Mode
+```bash
+python -m theagent --chat
+```
+
+**Example Conversation:**
+```
+You: list files
+TheAgent: Files in /current/directory:
+  Python files (3):
+    📄 main.py
+    📄 utils.py
+    📄 test_main.py
+
+You: read main.py
+TheAgent: 📄 main.py:
+[file contents displayed]
+
+You: generate docstrings for main.py
+TheAgent: [Generates and displays docstrings]
+```
+
+### Enhanced Mode with Safety Checks
+```bash
+python -m theagent --file main.py --agent doc --enhanced
+```
+
+**Flow:**
+1. Context awareness setup
+2. Safety check confirmation
+3. Docstring generation
+4. User approval of results
+5. Error handling if needed
+
+### File Management
+```bash
+python -m theagent --chat
+```
+
+**Commands:**
+```
+> list files
+> read main.py
+> create new_module.py
+> delete old_file.py
+```
+
+## Error Recovery
+
+The system provides multiple levels of error recovery:
+
+1. **Immediate Recovery**: Automatic retry for transient errors
+2. **User-Guided Recovery**: Clear error messages with suggestions
+3. **Context Preservation**: Maintains state during error recovery
+4. **Graceful Degradation**: Continues operation when possible
+
+## Configuration Options
+
+### Command Line Arguments
+
+- `--chat`: Enable enhanced chat mode
+- `--enhanced`: Use full enhanced flow with safety checks
+- `--verbose`: Show detailed context information
+- `--no-confirm`: Skip safety confirmations
+- `--file`: Specify target file for operations
+
+### Environment Variables
+
+- `OPENAI_API_KEY`: LLM service API key
+- `ALCHEMYST_API_KEY`: Alternative LLM service key
+
+## Implementation Details
+
+### Node Architecture
+
+Each node follows the PocketFlow pattern:
+- `prep()`: Prepare data and context
+- `exec()`: Execute core logic
+- `post()`: Handle results and decide next action
+
+### Shared Context
+
+The system maintains a shared context dictionary containing:
+- Chat history
+- Current directory
+- File information
+- Error states
+- User preferences
+
+### Flow Transitions
+
+Flows use action-based transitions:
+- `"continue"`: Proceed to next step
+- `"retry"`: Retry current operation
+- `"abort"`: Cancel operation
+- `"approved"`: User approved result
+- `"refine"`: User wants refinement
+
+## Best Practices
+
+### For Users
+
+1. **Start with Chat Mode**: Use `--chat` for interactive exploration
+2. **Use File Management**: List files before operating on them
+3. **Enable Safety Checks**: Use `--enhanced` for important operations
+4. **Provide Context**: Mention specific files when making requests
+5. **Use Verbose Mode**: Enable `--verbose` for debugging
+
+### For Developers
+
+1. **Error Handling**: Always wrap operations in try-catch blocks
+2. **User Feedback**: Provide clear, actionable error messages
+3. **Context Preservation**: Maintain state across operations
+4. **Safety First**: Always confirm destructive operations
+5. **Graceful Degradation**: Handle partial failures gracefully
 
 ## Future Enhancements
-- Integrate with version control (git) for safe file operations and undo.
-- Support batch file operations ("delete all .tmp files").
-- Add plugin system for custom file actions. 
+
+### Planned Features
+
+1. **Async Operations**: Support for concurrent file operations
+2. **Batch Processing**: Handle multiple files simultaneously
+3. **Plugin System**: Extensible agent architecture
+4. **Web Interface**: GUI for non-technical users
+5. **Integration APIs**: Connect with external tools
+
+### Performance Optimizations
+
+1. **Caching**: Cache LLM responses for repeated operations
+2. **Parallel Processing**: Execute independent operations concurrently
+3. **Lazy Loading**: Load file contents only when needed
+4. **Streaming**: Stream large file operations
+5. **Memory Management**: Optimize memory usage for large files
+
+## Troubleshooting
+
+### Common Issues
+
+1. **File Not Found**: Use `list files` to see available files
+2. **Permission Errors**: Check file permissions and ownership
+3. **LLM Errors**: Verify API key and network connection
+4. **Syntax Errors**: Fix code before running agents
+5. **Context Loss**: Use `--verbose` to see current context
+
+### Debug Mode
+
+Enable debug mode for detailed logging:
+```bash
+python -m theagent --chat --verbose
+```
+
+This will show:
+- Context information
+- Flow transitions
+- Error details
+- Operation progress 

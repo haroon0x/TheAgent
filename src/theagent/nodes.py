@@ -1,9 +1,11 @@
 from pocketflow import Node
-from theagent.utils.call_llm import AlchemistAIProxy
+from theagent.utils.call_llm import AlchemistAIProxy, GeneralLLMProxy
 import ast
 import os
 import shutil
 import re
+import yaml
+from typing import Dict, List, Optional, Any
 
 class BaseAgentNode(Node):
     def __init__(self, args, llm_proxy):
@@ -49,428 +51,373 @@ class BaseAgentNode(Node):
         return max_line
 
     def _manual_source_segment(self, source_code, start, end):
-        lines = source_code.splitlines()
+        """Manually extract source code segment."""
+        lines = source_code.split('\n')
         return '\n'.join(lines[start-1:end])
 
 class DocAgentNode(BaseAgentNode):
     def prep(self, shared):
         # Read and parse the Python file
-        source_code = self.read_source()
         try:
+            source_code = self.read_source()
             tree = ast.parse(source_code)
-        except SyntaxError as e:
-            raise SyntaxError(f"Syntax error in {self.args.file}: {e}")
-        # Extract all function definitions
-        functions = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                # Get start and end line numbers
-                start_line = node.lineno
-                # Try to get end line (Python 3.8+)
-                end_line = getattr(node, 'end_lineno', None)
-                if end_line is None:
-                    # Fallback: estimate end line
+            
+            # Extract function definitions
+            functions = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef):
+                    # Get the function source code
+                    start_line = node.lineno
                     end_line = self._find_end_line(node)
-                # Get source segment
-                try:
-                    func_source = ast.get_source_segment(source_code, node)
-                except Exception:
-                    func_source = self._manual_source_segment(source_code, start_line, end_line)
-                # Get indentation
-                def_line = source_code.splitlines()[start_line-1]
-                indentation = def_line[:len(def_line)-len(def_line.lstrip())]
-                functions.append({
-                    'name': node.name,
-                    'source_code': func_source,
-                    'start_line': start_line,
-                    'end_line': end_line,
-                    'indentation': indentation,
-                })
-        if not functions:
-            raise ValueError("No functions found in the file.")
-        shared['functions'] = functions
-        shared['source_code'] = source_code
-        return functions
+                    function_code = self._manual_source_segment(source_code, start_line, end_line)
+                    
+                    functions.append({
+                        'name': node.name,
+                        'code': function_code,
+                        'line': start_line
+                    })
+            
+            if not functions:
+                print("[WARNING] No functions found in the file")
+                return []
+            
+            return functions
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to parse file: {e}")
+            return []
 
     def _clean_docstring(self, doc):
-        doc = doc.strip()
-        # Remove code fences
-        doc = re.sub(r'^```(?:python)?', '', doc, flags=re.IGNORECASE).strip()
-        doc = re.sub(r'```$', '', doc, flags=re.IGNORECASE).strip()
-        # Remove leading/trailing triple quotes
-        doc = re.sub(r'^(["\"])\1\1', '', doc).strip()
-        doc = re.sub(r'(["\"])\1\1$', '', doc).strip()
+        """Clean up the generated docstring."""
+        # Remove any markdown formatting
+        doc = doc.replace('```python', '').replace('```', '').strip()
+        # Ensure it starts and ends with quotes
+        if not doc.startswith('"""'):
+            doc = '"""' + doc
+        if not doc.endswith('"""'):
+            doc = doc + '"""'
         return doc
 
     def exec(self, functions):
         # For each function, generate a docstring
-        docstrings = []
+        results = []
         for func in functions:
-            docstring = self.llm_proxy.generate_docstring(func['source_code'], self.args.llm)
-            docstrings.append(docstring)
-        return docstrings
+            try:
+                docstring = self.llm_proxy.generate_docstring(func['code'], func['name'])
+                if docstring:
+                    docstring = self._clean_docstring(docstring)
+                else:
+                    docstring = '"""Function documentation placeholder."""'
+                
+                results.append({
+                    'name': func['name'],
+                    'code': func['code'],
+                    'docstring': docstring,
+                    'line': func['line']
+                })
+                
+            except Exception as e:
+                print(f"[ERROR] Failed to generate docstring for {func['name']}: {e}")
+                results.append({
+                    'name': func['name'],
+                    'code': func['code'],
+                    'docstring': '"""Error: Failed to generate docstring"""',
+                    'line': func['line']
+                })
+        
+        return results
     
     def post(self, shared, prep_res, exec_res):
-        output_mode = self.args.output
+        if not exec_res:
+            print("[WARNING] No docstrings were generated")
+            return "default"
+        
+        # Display results
+        print("\nGenerated docstrings:")
+        print("=" * 50)
+        for result in exec_res:
+            print(f"\nFunction: {result['name']}")
+            print("-" * 40)
+            print(result['code'])
+            print(f"\nGenerated docstring:\n{result['docstring']}")
+        
+        # Insert docstrings into the source code and write to file if needed
         file_path = self.args.file
-        docstrings = exec_res
-        functions = shared['functions']
-        source_lines = shared['source_code'].splitlines()
-        verbose = getattr(self.args, 'verbose', False)
-        no_confirm = getattr(self.args, 'no_confirm', False)
-        if output_mode == 'console':
-            for func, doc in zip(functions, docstrings):
-                print(f"\nFunction: {func['name']}\n{'-'*40}")
-                print(func['source_code'])
-                print(f"\nGenerated docstring:\n{self._clean_docstring(doc)}\n")
-            return 'done'
-        # Prepare new file content
+        with open(file_path, 'r', encoding='utf-8') as f:
+            source_lines = f.readlines()
+        
+        # Map function name to docstring and line
+        doc_map = {r['name']: (r['docstring'], r['line']) for r in exec_res}
+        
+        # Parse AST to find function locations
+        tree = ast.parse(''.join(source_lines))
+        inserts = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in doc_map:
+                docstring, start_line = doc_map[node.name]
+                func_start = node.lineno - 1
+                # Check for existing docstring
+                if (len(node.body) > 0 and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Str)):
+                    doc_start = node.body[0].lineno - 1
+                    doc_end = node.body[0].end_lineno if hasattr(node.body[0], 'end_lineno') else doc_start + 1
+                    inserts.append((doc_start, doc_end, docstring))
+                else:
+                    # Insert after function def line
+                    header_end = func_start + 1
+                    while header_end < len(source_lines) and source_lines[header_end].strip() == '':
+                        header_end += 1
+                    inserts.append((header_end, header_end, docstring))
+        # Apply inserts in reverse order to not mess up line numbers
         new_lines = source_lines[:]
-        offset = 0
-        for idx, (func, doc) in enumerate(zip(functions, docstrings)):
-            clean_doc = self._clean_docstring(doc)
-            start = func['start_line'] - 1 + offset
-            end = func['end_line'] - 1 + offset
-            func_lines = new_lines[start:end+1]
-            # Remove old docstring if present
-            func_body_idx = 1
-            if (len(func_lines) > 1 and func_lines[1].lstrip().startswith(('"""', "'''"))):
-                doc_end = self._find_docstring_end(func_lines, func_lines[1].lstrip()[:3])
-                func_body_idx = doc_end + 1
-            # Insert new docstring after def line
-            docstring_lines = [func['indentation'] + '    ' + l for l in clean_doc.splitlines()]
-            docstring_block = [func['indentation'] + '    """'] + docstring_lines + [func['indentation'] + '    """']
-            new_func_lines = [func_lines[0]] + docstring_block + func_lines[func_body_idx:]
-            new_lines[start:end+1] = new_func_lines
-            offset += len(new_func_lines) - len(func_lines)
-            if output_mode in ('in-place', 'new-file') and not no_confirm:
-                confirm = input(f"Replace docstring for function '{func['name']}'? [y/N]: ")
-                if confirm.strip().lower() != 'y':
-                    continue
-            if verbose:
-                print(f"Processed function: {func['name']}")
-        # Write output
-        if output_mode == 'in-place':
-            backup_path = file_path + '.bak'
-            shutil.copyfile(file_path, backup_path)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(new_lines) + '\n')
-            if verbose:
-                print(f"Wrote updated file to {file_path} (backup at {backup_path})")
-        elif output_mode == 'new-file':
-            new_file = file_path.replace('.py', '_documented.py')
-            with open(new_file, 'w', encoding='utf-8') as f:
-                f.write('\n'.join(new_lines) + '\n')
-            if verbose:
-                print(f"Wrote documented file to {new_file}")
-        return 'done'
+        for start, end, docstring in sorted(inserts, reverse=True):
+            docstring_lines = [l + '\n' for l in docstring.strip().split('\n')]
+            new_lines[start:end] = docstring_lines
+        new_source = ''.join(new_lines)
+        # Write output if needed
+        self.write_output(new_source, 'documented', 'Documented Code')
+        # Store results in shared context
+        shared['docstring_results'] = exec_res
+        return "default"
 
     def _find_docstring_end(self, func_lines, quote):
         # Find the end of the docstring block
-        for i, line in enumerate(func_lines[1:], 1):
-            if line.lstrip().startswith(quote) and i != 1:
-                return i
-        return 1
+        for i, line in enumerate(func_lines):
+            if line.strip().endswith(quote):
+                return i + 1
+        return len(func_lines)
 
 class SummaryAgentNode(BaseAgentNode):
     def prep(self, shared):
-        source_code = self.read_source()
-        shared['source_code'] = source_code
-        return source_code
+        return self.read_source()
 
     def exec(self, source_code):
         # Summarize the file
-        summary = self.llm_proxy.summarize_code(source_code, self.args.llm)
-        return summary
-
-    def post(self, shared, prep_res, exec_res):
-        print("\n=== File Summary ===\n")
-        print(exec_res)
-        return 'done'
-
-class TypeAnnotationAgentNode(BaseAgentNode):
-    def prep(self, shared):
-        source_code = self.read_source()
         try:
-            tree = ast.parse(source_code)
-        except SyntaxError as e:
-            raise SyntaxError(f"Syntax error in {self.args.file}: {e}")
-        functions = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                start_line = node.lineno
-                end_line = getattr(node, 'end_lineno', None)
-                if end_line is None:
-                    end_line = self._find_end_line(node)
-                try:
-                    func_source = ast.get_source_segment(source_code, node)
-                except Exception:
-                    func_source = self._manual_source_segment(source_code, start_line, end_line)
-                functions.append({'name': node.name, 'source_code': func_source})
-        shared['functions'] = functions
-        return functions
-
-    def exec(self, functions):
-        suggestions = []
-        for func in functions:
-            suggestion = self.llm_proxy.suggest_type_annotations(func['source_code'], self.args.llm)
-            suggestions.append({'name': func['name'], 'suggestion': suggestion})
-        return suggestions
-    
-    def post(self, shared, prep_res, exec_res):
-        print("\n=== Type Annotation Suggestions ===\n")
-        for item in exec_res:
-            print(f"Function: {item['name']}")
-            print(item['suggestion'])
-            print("-"*40)
-        return 'done'
-
-class MigrationAgentNode(BaseAgentNode):
-    def exec(self, source_code):
-        migration_target = getattr(self.args, 'migration_target', 'Python 3')
-        migrated_code = self.llm_proxy.migration_code(source_code, migration_target, self.args.llm)
-        return migrated_code
+            summary = self.llm_proxy.summarize_code(source_code)
+            if summary is None:
+                summary = "Error: Failed to generate summary"
+            return summary
+        except Exception as e:
+            print(f"[ERROR] Failed to generate summary: {e}")
+            return "Error: Failed to generate summary"
 
     def post(self, shared, prep_res, exec_res):
         output_mode = getattr(self.args, 'output', 'console')
-        file_path = self.args.file
-        migrated_code = exec_res
-        verbose = getattr(self.args, 'verbose', False)
-        if output_mode == 'console':
-            print("\n=== Migrated Code ===\n")
-            print(migrated_code)
-        elif output_mode == 'in-place':
-            backup_path = file_path + '.bak'
-            shutil.copyfile(file_path, backup_path)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(migrated_code.rstrip() + '\n')
-            if verbose:
-                print(f"Wrote migrated file to {file_path} (backup at {backup_path})")
-        elif output_mode == 'new-file':
-            new_file = file_path.replace('.py', '_migrated.py')
-            with open(new_file, 'w', encoding='utf-8') as f:
-                f.write(migrated_code.rstrip() + '\n')
-            if verbose:
-                print(f"Wrote migrated file to {new_file}")
-        return 'done'
+        if output_mode == 'new-file':
+            self.write_output(exec_res, 'summary', 'Summary')
+        print(f"\n[SUMMARY] Summary of {self.args.file}:")
+        print("=" * 50)
+        print(exec_res)
+        print("=" * 50)
+
+        shared['summary'] = exec_res
+        return "default"
 
 class TestGenerationAgentNode(BaseAgentNode):
     def prep(self, shared):
-        source_code = self.read_source()
+        return self.read_source()
+
+    def exec(self, source_code):
         try:
-            tree = ast.parse(source_code)
-        except SyntaxError as e:
-            raise SyntaxError(f"Syntax error in {self.args.file}: {e}")
-        functions = []
-        for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef):
-                start_line = node.lineno
-                end_line = getattr(node, 'end_lineno', None)
-                if end_line is None:
-                    end_line = self._find_end_line(node)
-                try:
-                    func_source = ast.get_source_segment(source_code, node)
-                except Exception:
-                    func_source = self._manual_source_segment(source_code, start_line, end_line)
-                functions.append({'name': node.name, 'source_code': func_source})
-        shared['functions'] = functions
-        return functions
-
-    def exec(self, functions):
-        tests = []
-        for func in functions:
-            test_code = self.llm_proxy.test_generation(func['source_code'], self.args.llm)
-            tests.append({'name': func['name'], 'test_code': test_code})
-        return tests
-
-    def _clean_test_code(self, code):
-        import re
-        code = re.sub(r'^```(?:python)?', '', code, flags=re.MULTILINE).strip()
-        code = re.sub(r'```$', '', code, flags=re.MULTILINE).strip()
-        return code
-
-    def post(self, shared, prep_res, exec_res):
-        output_mode = getattr(self.args, 'output', 'console')
-        file_path = self.args.file
-        verbose = getattr(self.args, 'verbose', False)
-        import os
-        if output_mode == 'console':
-            print("\n=== Generated Unit Tests ===\n")
-            for item in exec_res:
-                print(f"Function: {item['name']}")
-                print(self._clean_test_code(item['test_code']))
-                print("-"*40)
-        else:
-            # Write to test_<filename>.py
-            base = os.path.basename(file_path)
-            if base.endswith('.py'):
-                base = base[:-3]
-            test_file = os.path.join(os.path.dirname(file_path), f"test_{base}.py")
-            with open(test_file, 'w', encoding='utf-8') as f:
-                for item in exec_res:
-                    clean_code = self._clean_test_code(item['test_code'])
-                    f.write(f"# Tests for {item['name']}\n{clean_code}\n\n")
-            if verbose:
-                print(f"Wrote generated tests to {test_file}")
-        return 'done'
-
-class BugDetectionAgentNode(BaseAgentNode):
-    def exec(self, source_code):
-        bug_report = self.llm_proxy.bug_detection(source_code, self.args.llm)
-        return bug_report
-
-    def post(self, shared, prep_res, exec_res):
-        print("\n=== Bug Report ===\n")
-        print(exec_res)
-        return 'done'
-
-class RefactorCodeAgentNode(BaseAgentNode):
-    def exec(self, source_code):
-        refactored_code = self.llm_proxy.refactor_code(source_code, self.args.llm)
-        return refactored_code
+            tests = self.llm_proxy.generate_tests(source_code)
+            if tests is None:
+                tests = "# Error: Failed to generate tests"
+            return tests
+        except Exception as e:
+            print(f"[ERROR] Failed to generate tests: {e}")
+            return "# Error: Failed to generate tests"
     
     def post(self, shared, prep_res, exec_res):
-        output_mode = getattr(self.args, 'output', 'console')
-        file_path = self.args.file
-        verbose = getattr(self.args, 'verbose', False)
-        if output_mode == 'console':
-            print("\n=== Refactored Code ===\n")
-            print(exec_res)
-        elif output_mode == 'in-place':
-            backup_path = file_path + '.bak'
-            shutil.copyfile(file_path, backup_path)
-            with open(file_path, 'w', encoding='utf-8') as f:
-                f.write(exec_res.rstrip() + '\n')
-            if verbose:
-                print(f"Wrote refactored file to {file_path} (backup at {backup_path})")
-        elif output_mode == 'new-file':
-            new_file = file_path.replace('.py', '_refactored.py')
-            with open(new_file, 'w', encoding='utf-8') as f:
-                f.write(exec_res.rstrip() + '\n')
-            if verbose:
-                print(f"Wrote refactored file to {new_file}")
-        return 'done'
+        self.write_output(exec_res, 'tests', 'Generated Tests')
+        shared['tests'] = exec_res
+        return "default"
 
-class OrchestratorAgentNode(BaseAgentNode):
+class MigrationAgentNode(BaseAgentNode):
+    def prep(self, shared):
+        return self.read_source()
+
+    def exec(self, source_code):
+        migration_target = getattr(self.args, 'migration_target', 'Python 3')
+        try:
+            migrated_code = self.llm_proxy.migrate_code(source_code, migration_target)
+            if migrated_code is None:
+                migrated_code = "# Error: Failed to migrate code"
+            return migrated_code
+        except Exception as e:
+            print(f"[ERROR] Failed to migrate code: {e}")
+            return "# Error: Failed to migrate code"
+
+    def post(self, shared, prep_res, exec_res):
+        self.write_output(exec_res, 'migrated', 'Migrated Code')
+        shared['migrated_code'] = exec_res
+        return "default"
+
+class BugDetectionAgentNode(BaseAgentNode):
+    def prep(self, shared):
+        return self.read_source()
+
+    def exec(self, source_code):
+        try:
+            bugs = self.llm_proxy.detect_bugs(source_code)
+            if bugs is None:
+                bugs = "Error: Failed to detect bugs"
+            return bugs
+        except Exception as e:
+            print(f"[ERROR] Failed to detect bugs: {e}")
+            return "Error: Failed to detect bugs"
+
+    def post(self, shared, prep_res, exec_res):
+        print(f"\n[BUG DETECTION] Analysis of {self.args.file}:")
+        print("=" * 50)
+        print(exec_res)
+        print("=" * 50)
+        
+        shared['bug_analysis'] = exec_res
+        return "default"
+
+class RefactorCodeAgentNode(BaseAgentNode):
+    def prep(self, shared):
+        return self.read_source()
+
+    def exec(self, source_code):
+        try:
+            refactored = self.llm_proxy.refactor_code(source_code)
+            if refactored is None:
+                refactored = "# Error: Failed to refactor code"
+            return refactored
+        except Exception as e:
+            print(f"[ERROR] Failed to refactor code: {e}")
+            return "# Error: Failed to refactor code"
+
+    def post(self, shared, prep_res, exec_res):
+        self.write_output(exec_res, 'refactored', 'Refactored Code')
+        shared['refactored_code'] = exec_res
+        return "default"
+
+class TypeAnnotationAgentNode(BaseAgentNode):
+    def prep(self, shared):
+        return self.read_source()
+
+    def exec(self, source_code):
+        try:
+            typed_code = self.llm_proxy.add_type_annotations(source_code)
+            if typed_code is None:
+                typed_code = "# Error: Failed to add type annotations"
+            return typed_code
+        except Exception as e:
+            print(f"[ERROR] Failed to add type annotations: {e}")
+            return "# Error: Failed to add type annotations"
+
+    def post(self, shared, prep_res, exec_res):
+        self.write_output(exec_res, 'typed', 'Code with Type Annotations')
+        shared['typed_code'] = exec_res
+        return "default"
+
+class OrchestratorAgentNode(Node):
     def prep(self, shared):
         # Get the user's instruction
-        instruction = getattr(self.args, 'instruction', None)
-        shared['instruction'] = instruction
-        return instruction
+        user_input = shared.get('user_input', '')
+        if not user_input:
+            user_input = input("Enter your instruction: ")
+            shared['user_input'] = user_input
+        
+        # Get chat history if available
+        chat_history = shared.get('chat_history', [])
+        
+        # Build context from chat history
+        context = ""
+        if chat_history:
+            context = "\n".join([f"User: {msg['user']}\nAgent: {msg['agent']}" for msg in chat_history[-3:]])  # Last 3 exchanges
+        
+        return user_input, context
 
-    def exec(self, instruction):
-        # Use the LLM to map the instruction to a list of agent types or answer
-        from langchain_openai import ChatOpenAI
-        system_prompt = (
-            "You are TheAgent, an expert developer assistant and orchestrator for code analysis and automation.\n"
-            "You can run the following specialized agents:\n"
-            "- 'doc': Generate Google-style docstrings for all functions in a Python file.\n"
-            "- 'summary': Summarize the main purpose and structure of a Python file.\n"
-            "- 'type': Suggest type annotations for all functions.\n"
-            "- 'migration': Migrate code to a new version or framework (e.g., Python 3, TensorFlow 2).\n"
-            "- 'test': Generate pytest-style unit tests for the code.\n"
-            "- 'bug': Find bugs and suggest fixes.\n"
-            "- 'refactor': Refactor code for readability and maintainability.\n"
-            "\n"
-            "Given a user instruction, output a Python list of agent types (from the above) that should be run, in order, to fulfill the instruction.\n"
-            "If the instruction is a general question or not related to code, respond with a string answer instead of a list.\n"
-            "If the instruction is ambiguous, ask the user for clarification.\n"
-            "\n"
-            "Examples:\n"
-            "Instruction: 'Summarize and generate docstrings.'\n"
-            "Output: ['summary', 'doc']\n"
-            "Instruction: 'Find bugs and refactor.'\n"
-            "Output: ['bug', 'refactor']\n"
-            "Instruction: 'What is the meaning of life?'\n"
-            "Output: 'The meaning of life is subjective, but many say it is to find happiness and purpose.'\n"
-            "Instruction: 'Can you help me?'\n"
-            "Output: 'Of course! Please tell me what you need help with.'\n"
-            "\n"
-            "Output Format:\n"
-            "- If the instruction is about code, output a valid Python list, e.g. ['doc', 'test', 'bug']. No explanations, markdown, or extra text.\n"
-            "- If the instruction is a general question, output a string answer.\n"
-            "- If you need clarification, output a string question for the user.\n"
-        )
-        prompt = f"User instruction: {instruction}\nOutput the list of agent types to run or answer the question."
-        llm = ChatOpenAI(
-            api_key=self.llm_proxy.api_key,
-            model=getattr(self.args, 'llm', 'alchemyst-ai/alchemyst-c1'),
-            base_url=self.llm_proxy.base_url,
-            temperature=0.1,
-            top_p=0.9,
-            max_tokens=256,
-        )
-        result = llm.invoke([
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ])
-        import ast as _ast
-        # Try to parse as a Python list, otherwise treat as a string answer
-        content = result.content.strip()
+    def exec(self, context_data):
+        user_input, context = context_data
+        
+        system_prompt = """You are an intelligent assistant that helps users with code-related tasks. Your job is to understand the user's intent and determine the best course of action.
+
+Available actions:
+1. file_management - For file operations (list, read, create, delete files)
+2. code_generation - For generating code, docstrings, tests, etc.
+3. code_analysis - For analyzing, summarizing, or reviewing code
+4. general_question - For answering general programming questions
+5. clarification_needed - When the request is ambiguous or missing information
+
+Return your response in YAML format:
+```yaml
+intent: <action_name>
+confidence: <0.0-1.0>
+reasoning: <brief explanation>
+parameters:
+  file_path: <if relevant>
+  operation: <specific operation>
+  agent_type: <if code generation needed>
+```
+
+Examples:
+- "list files" → file_management with operation: list
+- "read main.py" → file_management with operation: read, file_path: main.py
+- "generate docstrings" → clarification_needed (missing file)
+- "what is Python?" → general_question
+- "summarize this code" → clarification_needed (missing file)"""
+
+        prompt = f"""Context from previous conversation:
+{context}
+
+User input: {user_input}
+
+Analyze the user's intent and respond with the appropriate action."""
+
         try:
-            agent_list = _ast.literal_eval(content)
-            if isinstance(agent_list, list):
-                return agent_list
-        except Exception:
-            pass
-        # If not a list, return the string answer
-        return content
+            response = self.llm_proxy.chat(prompt)
+            
+            # Extract YAML from response
+            yaml_match = re.search(r'```yaml\s*(.*?)\s*```', response, re.DOTALL)
+            if yaml_match:
+                yaml_content = yaml_match.group(1)
+                result = yaml.safe_load(yaml_content)
+            else:
+                # Fallback parsing
+                result = {
+                    'intent': 'general_question',
+                    'confidence': 0.5,
+                    'reasoning': 'Could not parse intent, treating as general question',
+                    'parameters': {}
+                }
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error in intent recognition: {e}")
+            return {
+                'intent': 'general_question',
+                'confidence': 0.0,
+                'reasoning': f'Error: {e}',
+                'parameters': {}
+            }
 
     def post(self, shared, prep_res, exec_res):
         # If exec_res is a string, treat it as a direct answer (general chat)
         if isinstance(exec_res, str):
-            if not exec_res.strip():
-                return "I'm sorry, I didn't understand that. Please rephrase your question or instruction."
-            return exec_res
-
-        # If exec_res is a list, validate agent types
-        if isinstance(exec_res, list):
-            valid_agents = {'doc', 'summary', 'type', 'migration', 'test', 'bug', 'refactor'}
-            filtered = [a for a in exec_res if a in valid_agents]
-            invalid = [a for a in exec_res if a not in valid_agents]
-            response_lines = []
-
-            if not filtered and invalid:
-                # If all are invalid, treat as a chat response
-                return " ".join(str(x) for x in exec_res)
-
-            if invalid:
-                response_lines.append(f"Warning: The following actions are not supported and will be ignored: {', '.join(invalid)}")
-
-            file_path = getattr(self.args, 'file', None)
-            if not file_path and any(a in valid_agents for a in filtered):
-                response_lines.append("This action requires a file. Please provide one with --file or upload it.")
-                return "\n".join(response_lines)
-
-            # Run valid agent nodes
-            results = {}
-            for agent_type in filtered:
-                import copy
-                agent_args = copy.deepcopy(self.args)
-                agent_args.agent = agent_type
-                node = create_doc_agent_nodes(agent_args, self.llm_proxy)
-                shared_local = {}
-                try:
-                    if hasattr(node, 'prep') and hasattr(node, 'exec') and hasattr(node, 'post'):
-                        prep_res = node.prep(shared_local)
-                        exec_res = node.exec(prep_res)
-                        post_res = node.post(shared_local, prep_res, exec_res)
-                        results[agent_type] = post_res
-                        response_lines.append(f"Agent '{agent_type}' completed.")
-                    else:
-                        results[agent_type] = node.run(shared_local)
-                        response_lines.append(f"Agent '{agent_type}' completed.")
-                except Exception as e:
-                    results[agent_type] = f"Error: {e}"
-                    response_lines.append(f"Agent '{agent_type}' failed: {e}")
-
-            if response_lines:
-                return "\n".join(response_lines)
-            else:
-                return "All requested agent actions completed."
-
-        # Fallback: unknown output
-        return "I'm sorry, I didn't understand that. Please rephrase your question or instruction."
+            print(f"\n[AGENT] {exec_res}")
+            shared['agent_response'] = exec_res
+            return "default"
+        
+        # Otherwise, it's an intent recognition result
+        shared['intent_result'] = exec_res
+        intent = exec_res.get('intent', 'general_question')
+        
+        # Route to appropriate action
+        if intent == 'clarification_needed':
+            return 'clarification'
+        elif intent == 'file_management':
+            return 'file_management'
+        elif intent == 'code_generation':
+            return 'code_generation'
+        elif intent == 'code_analysis':
+            return 'code_analysis'
+        else:
+            return 'general_question'
 
 class UserApprovalNode(Node):
     def __init__(self, key_to_review, message="Please review the result below:", title="User Approval"):
@@ -480,38 +427,392 @@ class UserApprovalNode(Node):
         self.title = title
 
     def prep(self, shared):
-        return shared.get(self.key_to_review, "")
+        return shared.get(self.key_to_review, "No content to review")
 
     def exec(self, value):
-        print(f"\n=== {self.title} ===\n")
+        print(f"\n=== {self.title} ===")
         print(self.message)
+        print("-" * 50)
         print(value)
-        resp = input("Is this result good? (y/n): ").strip().lower()
-        return resp
+        print("-" * 50)
+        
+        while True:
+            response = input("Approve (a), Refine (r), or Deny (d)? ").lower().strip()
+            if response in ['a', 'approve']:
+                return 'approved'
+            elif response in ['r', 'refine']:
+                return 'refine'
+            elif response in ['d', 'deny']:
+                return 'denied'
+            else:
+                print("Please enter 'a', 'r', or 'd'")
+    
+    def post(self, shared, prep_res, exec_res):
+        return exec_res
+
+class IntentRecognitionNode(Node):
+    """Node for recognizing user intent in chat mode."""
+    
+    def __init__(self, args, llm_proxy):
+        super().__init__()
+        self.args = args
+        self.llm_proxy = llm_proxy
+
+    def prep(self, shared):
+        # Get the user's instruction
+        user_input = shared.get('user_input', '')
+        if not user_input:
+            user_input = input("Enter your instruction: ")
+            shared['user_input'] = user_input
+        
+        # Get chat history if available
+        chat_history = shared.get('chat_history', [])
+        
+        # Build context from chat history
+        context = ""
+        if chat_history:
+            context = "\n".join([f"User: {msg['user']}\nAgent: {msg['agent']}" for msg in chat_history[-3:]])  # Last 3 exchanges
+        
+        shared['context'] = context
+        
+        return user_input, context
+
+    def exec(self, context_data):
+        user_input, context = context_data
+        
+        system_prompt = """You are an intelligent assistant that helps users with code-related tasks. Your job is to understand the user's intent and determine the best course of action.
+
+Available actions:
+1. file_management - For file operations (list, read, create, delete files)
+2. code_generation - For generating code, docstrings, tests, etc.
+3. code_analysis - For analyzing, summarizing, or reviewing code
+4. general_question - For answering general programming questions
+5. clarification_needed - When the request is ambiguous or missing information
+
+Return your response in YAML format:
+```yaml
+intent: <action_name>
+confidence: <0.0-1.0>
+reasoning: <brief explanation>
+parameters:
+  file_path: <if relevant>
+  operation: <specific operation>
+  agent_type: <if code generation needed>
+```
+
+Examples:
+- "list files" → file_management with operation: list
+- "read main.py" → file_management with operation: read, file_path: main.py
+- "generate docstrings" → clarification_needed (missing file)
+- "what is Python?" → general_question
+- "summarize this code" → clarification_needed (missing file)"""
+
+        prompt = f"""Context from previous conversation:
+{context}
+
+User input: {user_input}
+
+Analyze the user's intent and respond with the appropriate action."""
+
+        try:
+            response = self.llm_proxy.chat(prompt)
+            
+            # Extract YAML from response
+            yaml_match = re.search(r'```yaml\s*(.*?)\s*```', response, re.DOTALL)
+            if yaml_match:
+                yaml_content = yaml_match.group(1)
+                result = yaml.safe_load(yaml_content)
+            else:
+                # Fallback parsing
+                result = {
+                    'intent': 'general_question',
+                    'confidence': 0.5,
+                    'reasoning': 'Could not parse intent, treating as general question',
+                    'parameters': {}
+                }
+            
+            return result
+            
+        except Exception as e:
+            print(f"Error in intent recognition: {e}")
+            return {
+                'intent': 'general_question',
+                'confidence': 0.0,
+                'reasoning': f'Error: {e}',
+                'parameters': {}
+            }
 
     def post(self, shared, prep_res, exec_res):
-        if exec_res == "y":
-            return "approved"
+        shared['intent_result'] = exec_res
+        intent = exec_res.get('intent', 'general_question')
+        
+        # Route to appropriate action
+        if intent == 'clarification_needed':
+            return 'clarification'
+        elif intent == 'file_management':
+            return 'file_management'
+        elif intent == 'code_generation':
+            return 'code_generation'
+        elif intent == 'code_analysis':
+            return 'code_analysis'
         else:
-            return "refine"
+            return 'general_question'
+
+class ClarificationNode(Node):
+    """Node for requesting clarification from the user."""
+    
+    def __init__(self, clarification_message):
+        super().__init__()
+        self.clarification_message = clarification_message
+
+    def prep(self, shared):
+        return shared.get('context', '')
+
+    def exec(self, context):
+        print(f"\n[CLARIFICATION NEEDED] {self.clarification_message}")
+        if context:
+            print(f"Context: {context}")
+        
+        clarification = input("Please provide more details: ")
+        return clarification
+
+    def post(self, shared, prep_res, exec_res):
+        # Add clarification exchange to history
+        chat_history = shared.get('chat_history', [])
+        chat_history.append({
+            'user': shared.get('user_input', ''),
+            'agent': f"Clarification requested: {self.clarification_message}"
+        })
+        chat_history.append({
+            'user': exec_res,
+            'agent': 'Thank you for the clarification.'
+        })
+        shared['chat_history'] = chat_history
+        
+        return "default"
+
+class FileManagementNode(Node):
+    """Node for handling file management operations."""
+    
+    def __init__(self, args, llm_proxy):
+        super().__init__()
+        self.args = args
+        self.llm_proxy = llm_proxy
+
+    def prep(self, shared):
+        return shared.get('intent_result', {})
+
+    def exec(self, context):
+        intent_data = context
+        operation = intent_data.get('parameters', {}).get('operation', '')
+        file_path = intent_data.get('parameters', {}).get('file_path', '')
+        
+        current_dir = os.getcwd()
+        
+        if operation == 'list':
+            return self._list_files(current_dir)
+        elif operation == 'read':
+            return self._read_file(file_path, current_dir)
+        elif operation == 'create':
+            return self._create_file(file_path, current_dir)
+        elif operation == 'delete':
+            return self._delete_file(file_path, current_dir)
+        else:
+            return f"Unknown file operation: {operation}"
+
+    def _list_files(self, directory):
+        """List files in the current directory."""
+        try:
+            files = os.listdir(directory)
+            file_list = []
+            for file in files:
+                if os.path.isfile(os.path.join(directory, file)):
+                    file_list.append(f"📄 {file}")
+                else:
+                    file_list.append(f"📁 {file}/")
+            
+            return f"Files in {directory}:\n" + "\n".join(file_list)
+        except Exception as e:
+            return f"Error listing files: {e}"
+
+    def _read_file(self, instruction, current_dir):
+        """Read a file based on instruction."""
+        try:
+            # Extract filename from instruction
+            if not instruction:
+                return "No file specified"
+            
+            file_path = os.path.join(current_dir, instruction)
+            if not os.path.exists(file_path):
+                return f"File not found: {instruction}"
+            
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            return f"Content of {instruction}:\n{'-' * 40}\n{content}"
+        except Exception as e:
+            return f"Error reading file: {e}"
+
+    def _create_file(self, instruction, current_dir):
+        """Create a file based on instruction."""
+        try:
+            if not instruction:
+                return "No file specified"
+            
+            file_path = os.path.join(current_dir, instruction)
+            if os.path.exists(file_path):
+                return f"File already exists: {instruction}"
+            
+            # Create empty file
+            with open(file_path, 'w') as f:
+                f.write("# Created by TheAgent\n")
+            
+            return f"Created file: {instruction}"
+        except Exception as e:
+            return f"Error creating file: {e}"
+
+    def _delete_file(self, instruction, current_dir):
+        """Delete a file based on instruction."""
+        try:
+            if not instruction:
+                return "No file specified"
+            
+            file_path = os.path.join(current_dir, instruction)
+            if not os.path.exists(file_path):
+                return f"File not found: {instruction}"
+            
+            os.remove(file_path)
+            return f"Deleted file: {instruction}"
+        except Exception as e:
+            return f"Error deleting file: {e}"
+
+    def post(self, shared, prep_res, exec_res):
+        print(f"\n[FILE OPERATION] {exec_res}")
+        shared['file_operation_result'] = exec_res
+        return "default"
+
+class SafetyCheckNode(Node):
+    """Node for performing safety checks before operations."""
+    
+    def __init__(self, operation_type, target_file=None):
+        super().__init__()
+        self.operation_type = operation_type
+        self.target_file = target_file
+
+    def prep(self, shared):
+        return shared.get('context', '')
+
+    def exec(self, context):
+        if self.operation_type == 'in_place_modification':
+            if self.target_file:
+                print(f"\n[SAFETY CHECK] You are about to modify {self.target_file} in-place.")
+                print("This will create a backup file with .bak extension.")
+                
+                response = input("Do you want to proceed? (y/n): ").lower().strip()
+                if response in ['y', 'yes']:
+                    return 'approved'
+                else:
+                    return 'denied'
+        
+        return 'approved'
+
+    def post(self, shared, prep_res, exec_res):
+        return exec_res
+
+class ContextAwarenessNode(Node):
+    """Node for gathering context about the current environment."""
+    
+    def __init__(self):
+        super().__init__()
+
+    def prep(self, shared):
+        return shared.get('args', {})
+
+    def exec(self, context):
+        # Gather context about the current environment
+        context_info = {
+            'current_directory': os.getcwd(),
+            'python_version': f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
+            'platform': os.sys.platform,
+            'available_files': []
+        }
+        
+        # List Python files in current directory
+        try:
+            files = os.listdir('.')
+            python_files = [f for f in files if f.endswith('.py')]
+            context_info['available_files'] = python_files
+        except Exception as e:
+            context_info['available_files'] = [f"Error listing files: {e}"]
+        
+        return context_info
+
+    def post(self, shared, prep_res, exec_res):
+        shared['context_info'] = exec_res
+        
+        # Display context information
+        print(f"\n[CONTEXT] Current environment:")
+        print(f"  Directory: {exec_res['current_directory']}")
+        print(f"  Python: {exec_res['python_version']}")
+        print(f"  Platform: {exec_res['platform']}")
+        print(f"  Python files: {', '.join(exec_res['available_files'][:5])}")
+        if len(exec_res['available_files']) > 5:
+            print(f"  ... and {len(exec_res['available_files']) - 5} more")
+        
+        return "default"
+
+class ErrorHandlingNode(Node):
+    """Node for handling errors and providing suggestions."""
+    
+    def __init__(self, operation_name):
+        super().__init__()
+        self.operation_name = operation_name
+
+    def prep(self, shared):
+        return shared.get('error_context', {})
+
+    def exec(self, context):
+        error_type = context.get('error_type', 'unknown')
+        error_message = context.get('error_message', 'Unknown error')
+        
+        suggestion = self._get_suggestion(error_type, context)
+        
+        return {
+            'error_type': error_type,
+            'error_message': error_message,
+            'suggestion': suggestion
+        }
+
+    def _get_suggestion(self, error_type, context):
+        """Get helpful suggestions based on error type."""
+        suggestions = {
+            'file_not_found': "Check if the file exists and the path is correct.",
+            'permission_denied': "Check file permissions or try running with elevated privileges.",
+            'api_error': "Check your API key and internet connection.",
+            'parsing_error': "The file might contain syntax errors. Check the code structure.",
+            'timeout': "The operation took too long. Try with a smaller file or check your connection.",
+            'unknown': "An unexpected error occurred. Check the error message above."
+        }
+        
+        return suggestions.get(error_type, suggestions['unknown'])
+
+    def post(self, shared, prep_res, exec_res):
+        print(f"\n[ERROR] {self.operation_name} failed:")
+        print(f"  Type: {exec_res['error_type']}")
+        print(f"  Message: {exec_res['error_message']}")
+        print(f"  Suggestion: {exec_res['suggestion']}")
+        
+        shared['error_info'] = exec_res
+        return "default"
 
 def create_doc_agent_nodes(args, llm_proxy):
-    agent_type = getattr(args, 'agent', 'doc')
-    if agent_type == 'doc':
-        return DocAgentNode(args, llm_proxy)
-    elif agent_type == 'summary':
-        return SummaryAgentNode(args, llm_proxy)
-    elif agent_type == 'type':
-        return TypeAnnotationAgentNode(args, llm_proxy)
-    elif agent_type == 'migration':
-        return MigrationAgentNode(args, llm_proxy)
-    elif agent_type == 'test':
-        return TestGenerationAgentNode(args, llm_proxy)
-    elif agent_type == 'bug':
-        return BugDetectionAgentNode(args, llm_proxy)
-    elif agent_type == 'refactor':
-        return RefactorCodeAgentNode(args, llm_proxy)
-    elif agent_type == 'orchestrator':
-        return OrchestratorAgentNode(args, llm_proxy)
-    else:
-        raise ValueError(f"Unknown agent type: {agent_type}")
+    """Create nodes for docstring generation."""
+    return {
+        'doc': DocAgentNode(args, llm_proxy),
+        'summary': SummaryAgentNode(args, llm_proxy),
+        'test': TestGenerationAgentNode(args, llm_proxy),
+        'bug': BugDetectionAgentNode(args, llm_proxy),
+        'refactor': RefactorCodeAgentNode(args, llm_proxy),
+        'type': TypeAnnotationAgentNode(args, llm_proxy),
+        'migration': MigrationAgentNode(args, llm_proxy)
+    }
