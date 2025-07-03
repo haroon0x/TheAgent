@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import json
 from theagent.flow import (
     create_doc_agent_flow, create_enhanced_agent_flow, create_simple_enhanced_flow,
     create_chat_flow
@@ -10,16 +11,19 @@ from theagent.utils.call_llm import AlchemistAIProxy
 class Args:
     pass
 
+SESSION_FILE_DEFAULT = "theagent_session.json"
+
 def setup_shared_context(args_obj):
     """Setup shared context with current directory and file information."""
     shared = {
-        'history': [],
+        'chat_history': [],
         'current_directory': os.getcwd(),
         'verbose': getattr(args_obj, 'verbose', False),
-        'no_confirm': getattr(args_obj, 'no_confirm', False)
+        'no_confirm': getattr(args_obj, 'no_confirm', False),
+        'provider': getattr(args_obj, 'provider', 'openai'),
+        'model': getattr(args_obj, 'model', None),
     }
-    
-    # Add file context if provided
+
     if hasattr(args_obj, 'file') and args_obj.file:
         shared['file'] = args_obj.file
         if os.path.exists(args_obj.file):
@@ -47,76 +51,118 @@ def run_sync_flow(flow, shared):
     """Run a synchronous flow."""
     return flow.run(shared)
 
+def save_session(shared, filename=SESSION_FILE_DEFAULT):
+    data = {
+        'chat_history': shared.get('chat_history', []),
+        'project_context': shared.get('project_context', {})
+    }
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+    print(f"[INFO] Session saved to {filename}")
+
+def load_session(shared, filename=SESSION_FILE_DEFAULT):
+    try:
+        with open(filename, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        shared['chat_history'] = data.get('chat_history', [])
+        shared['project_context'] = data.get('project_context', {})
+        print(f"[INFO] Session loaded from {filename}")
+    except Exception as e:
+        print(f"[WARN] Could not load session: {e}")
+
+def load_project_context(shared, files=None):
+    """Load project context (README, main files, config) into shared['project_context']."""
+    context = {}
+    if files is None:
+        files = []
+        # Default: README.md, pyproject.toml, requirements.txt, main.py
+        for fname in ["README.md", "pyproject.toml", "requirements.txt", "main.py"]:
+            if os.path.exists(fname):
+                files.append(fname)
+    for fname in files:
+        try:
+            with open(fname, 'r', encoding='utf-8') as f:
+                context[fname] = f.read()
+        except Exception as e:
+            context[fname] = f"[ERROR] Could not load: {e}"
+    shared['project_context'] = context
+
 def chat_with_theagent(args_obj, llm_proxy):
     """Enhanced chat function with better context awareness and error handling."""
     print("\n[TheAgent Chat] Type your instructions or questions. Type 'exit' to quit.")
     print("[TIP] Try: 'list files', 'read main.py', 'generate docstrings for main.py', or ask general questions.\n")
     
     shared = setup_shared_context(args_obj)
+    if getattr(args_obj, 'load_session', None):
+        load_session(shared, args_obj.load_session)
+    # Load project context
+    context_files = getattr(args_obj, 'context_files', None)
+    if context_files:
+        files = [f.strip() for f in context_files.split(',') if f.strip()]
+        load_project_context(shared, files)
+    else:
+        load_project_context(shared)
     
-    # Use enhanced flow for better intent recognition
-    flow = create_chat_flow(args_obj, llm_proxy)
+    # Pass provider/model to flow if needed
+    flow = create_chat_flow(args_obj, llm_proxy, provider=shared['provider'], model=shared['model'])
     
     while True:
         try:
             user_input = input('You: ')
             if user_input.strip().lower() in {'exit', 'quit', 'bye'}:
                 print('[GOODBYE] Thanks for using TheAgent!')
+                if getattr(args_obj, 'save_session', None):
+                    save_session(shared, args_obj.save_session)
                 break
             
-            # Add user message to history
-            shared['history'].append({'role': 'user', 'content': user_input})
-            
-            # Update instruction for the flow
+            shared['chat_history'].append({'role': 'user', 'content': user_input})
             args_obj.instruction = user_input
-            
-            # Run the enhanced flow
             try:
                 result = flow.run(shared)
                 if result:
                     print(f"TheAgent: {result}")
-                    shared['history'].append({'role': 'agent', 'content': result})
+                    shared['chat_history'].append({'role': 'agent', 'content': result})
             except Exception as e:
                 handle_error(e, shared, args_obj)
-                # Try to recover gracefully
                 print("[RECOVER] Attempting to recover...")
                 shared['last_error'] = e
                 
         except KeyboardInterrupt:
             print("\n\n[GOODBYE] Chat interrupted. Goodbye!")
+            if getattr(args_obj, 'save_session', None):
+                save_session(shared, args_obj.save_session)
             break
         except EOFError:
             print("\n\n[GOODBYE] End of input. Goodbye!")
+            if getattr(args_obj, 'save_session', None):
+                save_session(shared, args_obj.save_session)
             break
         except Exception as e:
             print(f"[ERROR] Unexpected error: {e}")
             print("[RESTART] Restarting chat...")
             shared = setup_shared_context(args_obj)
+            if getattr(args_obj, 'load_session', None):
+                load_session(shared, args_obj.load_session)
 
 def main():
     """Main entry point for TheAgent."""
     parser = argparse.ArgumentParser(description="TheAgent - AI-powered code assistant")
     
-    # File and agent options
     parser.add_argument("--file", "-f", help="Python file to process")
     parser.add_argument("--agent", "-a", choices=["doc", "summary", "test", "bug", "refactor", "type", "migration"], 
                        help="Type of agent to use")
     
-    # Output options
     parser.add_argument("--output", "-o", choices=["console", "in-place", "new-file"], 
                        default="console", help="Output mode")
     
-    # LLM options
     parser.add_argument("--llm", choices=["alchemyst", "openai", "anthropic", "ollama"], 
                        default="alchemyst", help="LLM provider to use")
     
-    # Enhanced features
     parser.add_argument("--enhanced", action="store_true", 
                        help="Use enhanced flow with safety checks and user approval")
     parser.add_argument("--chat", action="store_true", 
                        help="Start interactive chat mode")
     
-    # Other options
     parser.add_argument("--verbose", "-v", action="store_true", 
                        help="Enable verbose output")
     parser.add_argument("--no-confirm", action="store_true", 
@@ -124,39 +170,39 @@ def main():
     parser.add_argument("--migration-target", default="Python 3", 
                        help="Target for code migration")
     
+    parser.add_argument("--save-session", help="Save chat session to file on exit")
+    parser.add_argument("--load-session", help="Load chat session from file at start")
+    parser.add_argument("--context-files", help="Comma-separated list of files to load as project context")
+    parser.add_argument("--provider", choices=["openai", "anthropic", "google", "ollama"], default="openai", help="LLM provider to use")
+    parser.add_argument("--model", help="LLM model to use (e.g., gpt-4o, claude-3-haiku-20240307, gemini-2.5-flash)")
+    
     args_obj = parser.parse_args()
     
-    # Setup shared data
     shared = {
         "verbose": args_obj.verbose,
         "no_confirm": args_obj.no_confirm
     }
     
     try:
-        # Setup LLM proxy
         llm_proxy = setup_llm_proxy(args_obj)
         
-        # Handle different modes
         if args_obj.chat:
-            # Chat mode
             print("[INFO] Starting chat mode...")
             chat_with_theagent(args_obj, llm_proxy)
         elif args_obj.file and args_obj.agent:
-            # File processing mode
             print("[INFO] Starting processing...")
+            flow_args = dict(provider=getattr(args_obj, 'provider', 'openai'), model=getattr(args_obj, 'model', None))
             if args_obj.enhanced:
-                flow = create_enhanced_agent_flow(args_obj, llm_proxy)
+                flow = create_enhanced_agent_flow(args_obj, llm_proxy, **flow_args)
             else:
                 if args_obj.agent == "doc":
-                    flow = create_doc_agent_flow(args_obj, llm_proxy)
+                    flow = create_doc_agent_flow(args_obj, llm_proxy, **flow_args)
                 elif args_obj.agent == "summary":
-                    # Use simple enhanced flow for summary since there's no dedicated summary flow
-                    flow = create_simple_enhanced_flow(args_obj, llm_proxy)
+                    flow = create_simple_enhanced_flow(args_obj, llm_proxy, **flow_args)
                 else:
-                    flow = create_simple_enhanced_flow(args_obj, llm_proxy)
+                    flow = create_simple_enhanced_flow(args_obj, llm_proxy, **flow_args)
             run_sync_flow(flow, shared)
         else:
-            # No valid mode specified
             parser.print_help()
             return
         

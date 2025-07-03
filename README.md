@@ -26,8 +26,8 @@ cd theagent
 # Install dependencies
 pip install -r requirements.txt
 
-# Set up your API key
-echo "ALCHEMYST_API_KEY=your_api_key_here" > .env
+# Install the package in development mode
+pip install -e .
 ```
 
 ## 🔧 Setup
@@ -43,55 +43,59 @@ echo "ALCHEMYST_API_KEY=your_api_key_here" > .env
 ### Basic Usage
 
 ```bash
-# Generate docstrings for a Python file
-python -m theagent --file main.py --agent doc
+# Generate docstrings for a Python file using OpenAI GPT-4o
+theagent --file main.py --agent doc --provider openai --model gpt-4o
 
-# Summarize code
-python -m theagent --file main.py --agent summary
+# Use Anthropic Claude 3
+theagent --file main.py --agent doc --provider anthropic --model claude-3-haiku-20240307
 
-# Generate tests
-python -m theagent --file main.py --agent test
+# Use Google Gemini
+theagent --file main.py --agent doc --provider google --model gemini-2.5-flash
 
-# Detect bugs
-python -m theagent --file main.py --agent bug
-
-# Refactor code
-python -m theagent --file main.py --agent refactor
-
-# Add type annotations
-python -m theagent --file main.py --agent type
-
-# Migrate code
-python -m theagent --file main.py --agent migration
+# Use Ollama (local)
+theagent --file main.py --agent doc --provider ollama --model llama2
 ```
 
 ### Interactive Chat Mode
 
 ```bash
-# Start interactive chat
-python -m theagent --chat
+# Start interactive chat with Gemini
+theagent --chat --provider google --model gemini-2.5-flash
 ```
 
 ### Enhanced Mode with Safety Checks
 
 ```bash
-# Use enhanced mode with safety checks and user approval
-python -m theagent --file main.py --agent doc --enhanced
+# Use enhanced mode with Anthropic Claude 3
+theagent --file main.py --agent doc --enhanced --provider anthropic --model claude-3-haiku-20240307
 ```
 
 ## 📋 Command Line Options
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--file, -f` | Python file to process | None |
-| `--agent, -a` | Type of agent (doc, summary, test, bug, refactor, type, migration) | None |
-| `--output, -o` | Output mode (console, in-place, new-file) | console |
-| `--llm` | LLM provider (alchemyst, openai, anthropic, ollama) | alchemyst |
-| `--enhanced` | Use enhanced flow with safety checks | False |
-| `--chat` | Start interactive chat mode | False |
-| `--verbose, -v` | Enable verbose output | False |
-| `--no-confirm` | Skip user confirmation prompts | False |
-| `--migration-target` | Target for code migration | Python 3 |
+| Option | Description | Default | Required |
+|--------|-------------|---------|----------|
+| `--file, -f` | Python file to process | None | For file processing |
+| `--agent, -a` | Type of agent (doc, summary, test, bug, refactor, type, migration) | None | For file processing |
+| `--output, -o` | Output mode (console, in-place, new-file) | console | No |
+| `--provider` | LLM provider (openai, anthropic, google, ollama) | openai | No |
+| `--model` | LLM model to use (e.g., gpt-4o, claude-3-haiku-20240307, gemini-2.5-flash) | None | No |
+| `--enhanced` | Use enhanced flow with safety checks | False | No |
+| `--chat` | Start interactive chat mode | False | No |
+| `--verbose, -v` | Enable verbose output | False | No |
+| `--no-confirm` | Skip user confirmation prompts | False | No |
+| `--migration-target` | Target for code migration | Python 3 | No |
+| `--save-session` | Save chat session to file on exit | None | No |
+| `--load-session` | Load chat session from file at start | None | No |
+| `--context-files` | Comma-separated list of files to load as project context | None | No |
+
+## 🔌 Supported Providers & Environment Variables
+
+| Provider   | Models (examples)         | Env Variable(s)         |
+|------------|--------------------------|------------------------|
+| openai     | gpt-4o, gpt-3.5-turbo    | `OPENAI_API_KEY`       |
+| anthropic  | claude-3-haiku-20240307  | `ANTHROPIC_API_KEY`    |
+| google     | gemini-2.5-flash         | `GEMINI_API_KEY`       |
+| ollama     | llama2, phi3, etc.       | `OLLAMA_HOST` (opt.)   |
 
 ## 🔍 Examples
 
@@ -99,24 +103,24 @@ python -m theagent --file main.py --agent doc --enhanced
 
 ```bash
 # Generate docstrings for all functions in main.py
-python -m theagent --file main.py --agent doc --output in-place
+theagent --file main.py --agent doc --output in-place
 ```
 
 ### Code Analysis
 
 ```bash
 # Get a summary of your code
-python -m theagent --file main.py --agent summary
+theagent --file main.py --agent summary
 
 # Detect potential bugs
-python -m theagent --file main.py --agent bug --verbose
+theagent --file main.py --agent bug --verbose
 ```
 
 ### Interactive Development
 
 ```bash
 # Start chat mode for interactive help
-python -m theagent --chat
+theagent --chat
 
 # In chat mode, try these commands:
 # - "list files in current directory"
@@ -125,21 +129,40 @@ python -m theagent --chat
 # - "what does this code do?"
 ```
 
+### Enhanced Safety Mode
+
+```bash
+# Use enhanced mode with safety checks and user approval
+theagent --file main.py --agent doc --enhanced
+
+# This will:
+# 1. Check file safety before modification
+# 2. Generate the requested changes
+# 3. Ask for user approval
+# 4. Allow refinement if needed
+```
+
 ## 🏗️ Architecture
 
 TheAgent uses a modular architecture with:
 
 - **Flow-based Processing**: Uses PocketFlow for orchestration
-- **Node-based Agents**: Specialized nodes for different tasks
-- **LLM Integration**: Multiple LLM provider support
+- **Node-based Agents**: Specialized nodes for different tasks, each aware of provider/model
+- **LLM Integration**: Supports OpenAI, Anthropic, Google Gemini, and Ollama (local)
 - **Safety Features**: Built-in checks and user approval workflows
 - **Error Handling**: Robust error handling with fallback responses
 
 ## 🧪 Testing
 
 ```bash
-# Run the stability test
-python test_stable_version.py
+# Run all tests
+pytest
+
+# Run specific test file
+pytest tests/test_agent_nodes_comprehensive.py
+
+# Run with verbose output
+pytest -v
 ```
 
 ## 📁 Project Structure
@@ -153,11 +176,12 @@ theagent/
 │   ├── nodes.py             # Agent node implementations
 │   └── utils/
 │       ├── __init__.py
-│       └── call_llm.py      # LLM integration
+│       ├── call_llm.py      # LLM integration
+│       └── visualize_flow.py # Flow visualization
 ├── docs/                    # Documentation
 ├── tests/                   # Test files
 ├── requirements.txt         # Dependencies
-├── setup.py                # Package setup
+├── pyproject.toml          # Package configuration
 └── README.md               # This file
 ```
 
@@ -169,6 +193,15 @@ theagent/
 2. Add the node to the flow in `src/theagent/flow.py`
 3. Update the CLI options in `src/theagent/main.py`
 4. Add tests and documentation
+
+### Flow Visualization
+
+```bash
+# Visualize a specific flow
+python -m src.theagent.utils.visualize_flow src.theagent.flow:create_chat_flow
+
+# This generates a Mermaid diagram showing the flow structure
+```
 
 ### Contributing
 
@@ -191,7 +224,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 🚀 Roadmap
 
 - [ ] Web interface
-- [ ] More LLM providers
+- [ ] More LLM providers (OpenAI, Anthropic, Ollama)
 - [ ] Advanced code analysis
 - [ ] Integration with IDEs
 - [ ] Batch processing

@@ -8,10 +8,12 @@ import yaml
 from typing import Dict, List, Optional, Any
 
 class BaseAgentNode(Node):
-    def __init__(self, args, llm_proxy):
+    def __init__(self, args, llm_proxy, provider='openai', model=None):
         super().__init__()
         self.args = args
         self.llm_proxy = llm_proxy
+        self.provider = provider
+        self.model = model
 
     def read_source(self):
         file_path = self.args.file
@@ -57,41 +59,30 @@ class BaseAgentNode(Node):
 
 class DocAgentNode(BaseAgentNode):
     def prep(self, shared):
-        # Read and parse the Python file
         try:
             source_code = self.read_source()
             tree = ast.parse(source_code)
-            
-            # Extract function definitions
             functions = []
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef):
-                    # Get the function source code
                     start_line = node.lineno
                     end_line = self._find_end_line(node)
                     function_code = self._manual_source_segment(source_code, start_line, end_line)
-                    
                     functions.append({
                         'name': node.name,
                         'code': function_code,
                         'line': start_line
                     })
-            
             if not functions:
                 print("[WARNING] No functions found in the file")
                 return []
-            
             return functions
-            
         except Exception as e:
             print(f"[ERROR] Failed to parse file: {e}")
             return []
 
     def _clean_docstring(self, doc):
-        """Clean up the generated docstring."""
-        # Remove any markdown formatting
         doc = doc.replace('```python', '').replace('```', '').strip()
-        # Ensure it starts and ends with quotes
         if not doc.startswith('"""'):
             doc = '"""' + doc
         if not doc.endswith('"""'):
@@ -99,23 +90,21 @@ class DocAgentNode(BaseAgentNode):
         return doc
 
     def exec(self, functions):
-        # For each function, generate a docstring
         results = []
         for func in functions:
             try:
-                docstring = self.llm_proxy.generate_docstring(func['code'], func['name'])
+                docstring = self.llm_proxy.generate_docstring(
+                    func['code'], provider=self.provider, model=self.model)
                 if docstring:
                     docstring = self._clean_docstring(docstring)
                 else:
                     docstring = '"""Function documentation placeholder."""'
-                
                 results.append({
                     'name': func['name'],
                     'code': func['code'],
                     'docstring': docstring,
                     'line': func['line']
                 })
-                
             except Exception as e:
                 print(f"[ERROR] Failed to generate docstring for {func['name']}: {e}")
                 results.append({
@@ -124,15 +113,12 @@ class DocAgentNode(BaseAgentNode):
                     'docstring': '"""Error: Failed to generate docstring"""',
                     'line': func['line']
                 })
-        
         return results
-    
+
     def post(self, shared, prep_res, exec_res):
         if not exec_res:
             print("[WARNING] No docstrings were generated")
             return "default"
-        
-        # Display results
         print("\nGenerated docstrings:")
         print("=" * 50)
         for result in exec_res:
@@ -140,47 +126,35 @@ class DocAgentNode(BaseAgentNode):
             print("-" * 40)
             print(result['code'])
             print(f"\nGenerated docstring:\n{result['docstring']}")
-        
-        # Insert docstrings into the source code and write to file if needed
         file_path = self.args.file
         with open(file_path, 'r', encoding='utf-8') as f:
             source_lines = f.readlines()
-        
-        # Map function name to docstring and line
         doc_map = {r['name']: (r['docstring'], r['line']) for r in exec_res}
-        
-        # Parse AST to find function locations
         tree = ast.parse(''.join(source_lines))
         inserts = []
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name in doc_map:
                 docstring, start_line = doc_map[node.name]
                 func_start = node.lineno - 1
-                # Check for existing docstring
                 if (len(node.body) > 0 and isinstance(node.body[0], ast.Expr) and isinstance(node.body[0].value, ast.Str)):
                     doc_start = node.body[0].lineno - 1
                     doc_end = node.body[0].end_lineno if hasattr(node.body[0], 'end_lineno') else doc_start + 1
                     inserts.append((doc_start, doc_end, docstring))
                 else:
-                    # Insert after function def line
                     header_end = func_start + 1
                     while header_end < len(source_lines) and source_lines[header_end].strip() == '':
                         header_end += 1
                     inserts.append((header_end, header_end, docstring))
-        # Apply inserts in reverse order to not mess up line numbers
         new_lines = source_lines[:]
         for start, end, docstring in sorted(inserts, reverse=True):
             docstring_lines = [l + '\n' for l in docstring.strip().split('\n')]
             new_lines[start:end] = docstring_lines
         new_source = ''.join(new_lines)
-        # Write output if needed
         self.write_output(new_source, 'documented', 'Documented Code')
-        # Store results in shared context
         shared['docstring_results'] = exec_res
         return "default"
 
     def _find_docstring_end(self, func_lines, quote):
-        # Find the end of the docstring block
         for i, line in enumerate(func_lines):
             if line.strip().endswith(quote):
                 return i + 1
@@ -191,9 +165,9 @@ class SummaryAgentNode(BaseAgentNode):
         return self.read_source()
 
     def exec(self, source_code):
-        # Summarize the file
         try:
-            summary = self.llm_proxy.summarize_code(source_code)
+            summary = self.llm_proxy.summarize_code(
+                source_code, provider=self.provider, model=self.model)
             if summary is None:
                 summary = "Error: Failed to generate summary"
             return summary
@@ -209,7 +183,6 @@ class SummaryAgentNode(BaseAgentNode):
         print("=" * 50)
         print(exec_res)
         print("=" * 50)
-
         shared['summary'] = exec_res
         return "default"
 
@@ -219,14 +192,15 @@ class TestGenerationAgentNode(BaseAgentNode):
 
     def exec(self, source_code):
         try:
-            tests = self.llm_proxy.generate_tests(source_code)
+            tests = self.llm_proxy.generate_tests(
+                source_code, provider=self.provider, model=self.model)
             if tests is None:
                 tests = "# Error: Failed to generate tests"
             return tests
         except Exception as e:
             print(f"[ERROR] Failed to generate tests: {e}")
             return "# Error: Failed to generate tests"
-    
+
     def post(self, shared, prep_res, exec_res):
         self.write_output(exec_res, 'tests', 'Generated Tests')
         shared['tests'] = exec_res
@@ -239,7 +213,8 @@ class MigrationAgentNode(BaseAgentNode):
     def exec(self, source_code):
         migration_target = getattr(self.args, 'migration_target', 'Python 3')
         try:
-            migrated_code = self.llm_proxy.migrate_code(source_code, migration_target)
+            migrated_code = self.llm_proxy.migrate_code(
+                source_code, migration_target, provider=self.provider, model=self.model)
             if migrated_code is None:
                 migrated_code = "# Error: Failed to migrate code"
             return migrated_code
@@ -258,7 +233,8 @@ class BugDetectionAgentNode(BaseAgentNode):
 
     def exec(self, source_code):
         try:
-            bugs = self.llm_proxy.detect_bugs(source_code)
+            bugs = self.llm_proxy.detect_bugs(
+                source_code, provider=self.provider, model=self.model)
             if bugs is None:
                 bugs = "Error: Failed to detect bugs"
             return bugs
@@ -271,7 +247,6 @@ class BugDetectionAgentNode(BaseAgentNode):
         print("=" * 50)
         print(exec_res)
         print("=" * 50)
-        
         shared['bug_analysis'] = exec_res
         return "default"
 
@@ -281,7 +256,8 @@ class RefactorCodeAgentNode(BaseAgentNode):
 
     def exec(self, source_code):
         try:
-            refactored = self.llm_proxy.refactor_code(source_code)
+            refactored = self.llm_proxy.refactor_code(
+                source_code, provider=self.provider, model=self.model)
             if refactored is None:
                 refactored = "# Error: Failed to refactor code"
             return refactored
@@ -300,7 +276,8 @@ class TypeAnnotationAgentNode(BaseAgentNode):
 
     def exec(self, source_code):
         try:
-            typed_code = self.llm_proxy.add_type_annotations(source_code)
+            typed_code = self.llm_proxy.add_type_annotations(
+                source_code, provider=self.provider, model=self.model)
             if typed_code is None:
                 typed_code = "# Error: Failed to add type annotations"
             return typed_code
@@ -313,27 +290,36 @@ class TypeAnnotationAgentNode(BaseAgentNode):
         shared['typed_code'] = exec_res
         return "default"
 
+def get_relevant_history(chat_history, n=3, topic=None):
+    """Return the last n turns, or those matching a topic if provided."""
+    if topic:
+        filtered = [msg for msg in chat_history if topic.lower() in msg['content'].lower()]
+        return filtered[-n:]
+    return chat_history[-n:]
+
 class OrchestratorAgentNode(Node):
     def __init__(self, args, llm_proxy):
         super().__init__()
         self.args = args
         self.llm_proxy = llm_proxy
-    
+
     def prep(self, shared):
-        # Get the user's instruction
         user_input = shared.get('user_input', '')
         if not user_input:
             user_input = input("Enter your instruction: ")
             shared['user_input'] = user_input
-        
-        # Get chat history if available
         chat_history = shared.get('chat_history', [])
-        
-        # Build context from chat history
-        context = ""
-        if chat_history:
-            context = "\n".join([f"User: {msg['user']}\nAgent: {msg['agent']}" for msg in chat_history[-3:]])  # Last 3 exchanges
-        
+        relevant = get_relevant_history(chat_history, n=5)
+        context = "\n".join([
+            f"{msg['role'].capitalize()}: {msg['content']}" for msg in relevant
+        ])
+        # Project context summary
+        project_context = shared.get('project_context', {})
+        if project_context:
+            context_snippet = "\n".join([
+                f"[{fname}]\n{content[:500]}{'...\n' if len(content) > 500 else ''}" for fname, content in project_context.items()
+            ])
+            context = f"Project Context:\n{context_snippet}\n\n" + context
         return user_input, context
 
     def exec(self, context_data):
@@ -458,28 +444,31 @@ class UserApprovalNode(Node):
 class IntentRecognitionNode(Node):
     """Node for recognizing user intent in chat mode."""
     
-    def __init__(self, args, llm_proxy):
+    def __init__(self, args, llm_proxy, provider='openai', model=None):
         super().__init__()
         self.args = args
         self.llm_proxy = llm_proxy
+        self.provider = provider
+        self.model = model
 
     def prep(self, shared):
-        # Get the user's instruction
         user_input = shared.get('user_input', '')
         if not user_input:
             user_input = input("Enter your instruction: ")
             shared['user_input'] = user_input
-        
-        # Get chat history if available
         chat_history = shared.get('chat_history', [])
-        
-        # Build context from chat history
-        context = ""
-        if chat_history:
-            context = "\n".join([f"User: {msg['user']}\nAgent: {msg['agent']}" for msg in chat_history[-3:]])  # Last 3 exchanges
-        
+        relevant = get_relevant_history(chat_history, n=5)
+        context = "\n".join([
+            f"{msg['role'].capitalize()}: {msg['content']}" for msg in relevant
+        ])
+        # Project context summary
+        project_context = shared.get('project_context', {})
+        if project_context:
+            context_snippet = "\n".join([
+                f"[{fname}]\n{content[:500]}{'...\n' if len(content) > 500 else ''}" for fname, content in project_context.items()
+            ])
+            context = f"Project Context:\n{context_snippet}\n\n" + context
         shared['context'] = context
-        
         return user_input, context
 
     def exec(self, context_data):
@@ -520,7 +509,8 @@ User input: {user_input}
 Analyze the user's intent and respond with the appropriate action."""
 
         try:
-            response = self.llm_proxy.chat(prompt)
+            response = self.llm_proxy.chat(
+                prompt, provider=self.provider, model=self.model)
             
             # Extract YAML from response
             yaml_match = re.search(r'```yaml\s*(.*?)\s*```', response, re.DOTALL)
@@ -582,27 +572,23 @@ class ClarificationNode(Node):
         return clarification
 
     def post(self, shared, prep_res, exec_res):
-        # Add clarification exchange to history
         chat_history = shared.get('chat_history', [])
-        chat_history.append({
-            'user': shared.get('user_input', ''),
-            'agent': f"Clarification requested: {self.clarification_message}"
-        })
-        chat_history.append({
-            'user': exec_res,
-            'agent': 'Thank you for the clarification.'
-        })
+        chat_history.append({'role': 'user', 'content': shared.get('user_input', '')})
+        chat_history.append({'role': 'agent', 'content': f"Clarification requested: {self.clarification_message}"})
+        chat_history.append({'role': 'user', 'content': exec_res})
+        chat_history.append({'role': 'agent', 'content': 'Thank you for the clarification.'})
         shared['chat_history'] = chat_history
-        
         return "default"
 
 class FileManagementNode(Node):
     """Node for handling file management operations."""
     
-    def __init__(self, args, llm_proxy):
+    def __init__(self, args, llm_proxy, provider='openai', model=None):
         super().__init__()
         self.args = args
         self.llm_proxy = llm_proxy
+        self.provider = provider
+        self.model = model
 
     def prep(self, shared):
         return shared.get('intent_result', {})

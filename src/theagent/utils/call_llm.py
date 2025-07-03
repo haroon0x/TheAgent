@@ -5,17 +5,92 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from .utils import ProgressTracker, create_progress_tracker
 
-class AlchemistAIProxy:
+class GeneralLLMProxy:
     def __init__(self):
         load_dotenv()
-        self.api_key = os.environ.get("ALCHEMYST_API_KEY")
-        self.base_url = "https://platform-backend.getalchemystai.com/api/v1/proxy/default"
+        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
+        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+        self.google_api_key = os.environ.get("GOOGLE_GENAI_API_KEY")
+        self.ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
-    def generate_docstring(self, function_code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        """
-        Generate a Google-style docstring for the given function code using the specified LLM model.
-        """
-        from langchain_openai import ChatOpenAI
+    def call_llm(self, prompt, provider='openai', **kwargs):
+        if provider == 'openai':
+            return self._call_openai_llm(prompt, **kwargs)
+        elif provider == 'anthropic':
+            return self._call_anthropic_llm(prompt, **kwargs)
+        elif provider == 'ollama':
+            return self._call_ollama_llm(prompt, **kwargs)
+        elif provider == 'google':
+            return self._call_google_genai_llm(prompt, **kwargs)
+        else:
+            raise ValueError(f"Unsupported provider: {provider}")
+
+    def _call_openai_llm(self, prompt, model='gpt-4o', api_key=None, base_url=None, temperature=0.2, top_p=0.9, max_tokens=1024, **kwargs):
+        import openai
+        api_key = api_key or self.openai_api_key
+        openai.api_key = api_key
+        if base_url:
+            openai.base_url = base_url
+        try:
+            response = openai.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=temperature,
+                top_p=top_p,
+                max_tokens=max_tokens,
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e:
+            print(f"[GeneralLLMProxy] OpenAI API error: {e}")
+            return f"Error: Failed to call OpenAI LLM - {e}"
+
+    def _call_anthropic_llm(self, prompt, model='claude-3-haiku-20240307', api_key=None, **kwargs):
+        import anthropic
+        api_key = api_key or self.anthropic_api_key
+        client = anthropic.Anthropic(api_key=api_key)
+        try:
+            response = client.messages.create(
+                model=model,
+                max_tokens=1024,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            return response.content[0].text.strip() if response.content else "Error: No response from LLM"
+        except Exception as e:
+            print(f"[GeneralLLMProxy] Anthropic API error: {e}")
+            return f"Error: Failed to call Anthropic LLM - {e}"
+
+    def _call_ollama_llm(self, prompt, model='llama2', host=None, **kwargs):
+        import ollama
+        host = host or self.ollama_host
+        try:
+            response = ollama.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                base_url=host
+            )
+            return response.message.content.strip() if response.message else "Error: No response from LLM"
+        except Exception as e:
+            print(f"[GeneralLLMProxy] Ollama API error: {e}")
+            return f"Error: Failed to call Ollama LLM - {e}"
+
+    def _call_google_genai_llm(self, prompt, model='gemini-2.5-flash', api_key=None, **kwargs):
+        from google import genai
+        import os
+        api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        client = genai.Client(api_key=api_key)
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                **kwargs
+            )
+            return response.text.strip() 
+        except Exception as e:
+            print(f"[GeneralLLMProxy] Google Gemini API error: {e}")
+            return f"Error: Failed to call Google Gemini - {e}"
+
+    # Agent methods
+    def generate_docstring(self, function_code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
             "You are an expert Python documentation agent. "
             "Your job is to generate professional, comprehensive, and accurate Google-style docstrings for Python functions. "
@@ -44,31 +119,9 @@ class AlchemistAIProxy:
             "\n\nOutput Format:\nOnly output the docstring content, no triple quotes, no markdown, no extra text.\n\nSample Output (for a function that adds two numbers):\nAdds two numbers together.\n\nArgs:\n    a (int): The first number.\n    b (int): The second number.\n\nReturns:\n    int: The sum of a and b.\n"
         )
         prompt = f"Document this Python function:\n{function_code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "# Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "# Error: Failed to generate docstring"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def summarize_code(self, code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
+    def summarize_code(self, code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
             "You are an expert Python code summarization agent. "
             "Your job is to read Python code and generate a concise, high-level summary of what the code does. "
@@ -79,67 +132,10 @@ class AlchemistAIProxy:
             "- Be clear, accurate, and concise. "
             "\n\nOutput Format:\nA single concise paragraph. No code, no markdown, no extra text.\n\nSample Output:\nThis script processes CSV files and generates summary statistics for each column, including mean, median, and standard deviation. The main function orchestrates file loading, data cleaning, and result output."
         )
-        prompt = "Summarize this Python code:\n" + code
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=512,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "Error: Failed to generate summary"
+        prompt = f"Summarize this Python code:\n{code}"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def suggest_type_annotations(self, function_code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
-        system_prompt = (
-            "You are an expert Python type annotation agent. "
-            "Your job is to add proper type hints to Python functions. "
-            "- Only output the function with type annotations, do NOT include any explanations, markdown, or extra text. "
-            "- Use modern Python type hints (Python 3.7+). "
-            "- Import necessary types from typing module if needed. "
-            "- If the function is already properly typed, return it unchanged. "
-            "\n\nOutput Format:\nOnly output the function with type annotations. No explanations, no markdown, no extra text.\n\nSample Output:\nfrom typing import List, Optional\n\ndef process_data(items: List[str], count: Optional[int] = None) -> List[str]:\n    return items[:count] if count else items\n"
-        )
-        prompt = f"Add type annotations to this Python function:\n{function_code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "# Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "# Error: Failed to add type annotations"
-
-    def test_generation(self, function_code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
+    def generate_tests(self, function_code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
             "You are an expert Python testing agent. "
             "Your job is to generate comprehensive unit tests for Python functions. "
@@ -152,31 +148,9 @@ class AlchemistAIProxy:
             "\n\nOutput Format:\nOnly output the test code. No explanations, no markdown, no extra text.\n\nSample Output:\nimport pytest\nfrom mymodule import my_function\n\ndef test_my_function_normal_case():\n    assert my_function(2, 3) == 5\n\ndef test_my_function_edge_case():\n    assert my_function(0, 0) == 0\n"
         )
         prompt = f"Generate unit tests for this Python function:\n{function_code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "# Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "# Error: Failed to generate tests"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def bug_detection(self, code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
+    def detect_bugs(self, code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
             "You are an expert Python code review agent specializing in bug detection. "
             "Your job is to analyze Python code and identify potential bugs, issues, or improvements. "
@@ -188,31 +162,9 @@ class AlchemistAIProxy:
             "\n\nOutput Format:\nA clear analysis of potential issues. No code, no markdown, no extra text.\n\nSample Output:\nThe code looks generally well-structured, but there are a few potential issues: 1) The function doesn't handle the case where the input list is empty, which could cause an IndexError. 2) There's no validation of input parameters, which could lead to unexpected behavior with invalid inputs. 3) The variable naming could be more descriptive to improve readability."
         )
         prompt = f"Analyze this Python code for potential bugs and issues:\n{code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-                )
-            result = llm.invoke([
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": prompt}
-    ])
-            if result.content is None:
-                return "Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "Error: Failed to analyze code"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def refactor_code(self, code: str, model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
+    def refactor_code(self, code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
             "You are an expert Python refactoring agent. "
             "Your job is to refactor Python code to improve readability, performance, and maintainability. "
@@ -225,124 +177,35 @@ class AlchemistAIProxy:
             "\n\nOutput Format:\nOnly output the refactored code. No explanations, no markdown, no extra text.\n\nSample Output:\ndef calculate_average(numbers: list[float]) -> float:\n    \"\"\"Calculate the average of a list of numbers.\"\"\"\n    if not numbers:\n        raise ValueError(\"Cannot calculate average of empty list\")\n    return sum(numbers) / len(numbers)\n"
         )
         prompt = f"Refactor this Python code to improve quality:\n{code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "# Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "# Error: Failed to refactor code"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def migration_code(self, code: str, migration_target: str = "Python 3", model_name: str = "alchemyst-ai/alchemyst-c1") -> str:
-        from langchain_openai import ChatOpenAI
+    def migrate_code(self, code: str, migration_target: str = "Python 3", provider='openai', model='gpt-4o', **kwargs) -> str:
         system_prompt = (
-            f"You are an expert Python migration agent. "
-            f"Your job is to migrate Python code to {migration_target} compatibility. "
+            "You are an expert Python code migration agent. "
+            "Your job is to migrate Python code to the specified target version. "
             "- Only output the migrated code, do NOT include any explanations, markdown, or extra text. "
-            "- Update syntax to be compatible with the target version. "
-            "- Replace deprecated functions and methods. "
-            "- Update import statements if needed. "
-            "- Maintain the same functionality while ensuring compatibility. "
-            "- If the code is already compatible, return it unchanged. "
+            "- Ensure the code is compatible with the target Python version. "
+            "- Update deprecated functions and syntax. "
+            "- Use modern Python features where appropriate. "
+            "- Maintain the original functionality. "
             "\n\nOutput Format:\nOnly output the migrated code. No explanations, no markdown, no extra text.\n\nSample Output:\nfrom typing import List\n\ndef process_items(items: List[str]) -> List[str]:\n    return [item.upper() for item in items]\n"
         )
         prompt = f"Migrate this Python code to {migration_target}:\n{code}"
-        try:
-            if not self.api_key:
-                raise ValueError("ALCHEMYST_API_KEY not found in environment variables")
-            
-            llm = ChatOpenAI(
-                api_key=self.api_key,
-                model=model_name,
-                base_url=self.base_url,
-                temperature=0.2,
-                top_p=0.9,
-                max_tokens=1024,
-            )
-            result = llm.invoke([
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt}
-            ])
-            if result.content is None:
-                return "# Error: No response from LLM"
-            return result.content.strip()
-        except Exception as e:
-            print(f"[AlchemistAIProxy] LLM API error: {e}")
-            return "# Error: Failed to migrate code"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-class GeneralLLMProxy:
-    def __init__(self):
-        load_dotenv()
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
-        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
+    def add_type_annotations(self, code: str, provider='openai', model='gpt-4o', **kwargs) -> str:
+        system_prompt = (
+            "You are an expert Python type annotation agent. "
+            "Your job is to add proper type hints to Python functions. "
+            "- Only output the function with type annotations, do NOT include any explanations, markdown, or extra text. "
+            "- Use modern Python type hints (Python 3.7+). "
+            "- Import necessary types from typing module if needed. "
+            "- If the function is already properly typed, return it unchanged. "
+            "\n\nOutput Format:\nOnly output the function with type annotations. No explanations, no markdown, no extra text.\n\nSample Output:\nfrom typing import List, Optional\n\ndef process_data(items: List[str], count: Optional[int] = None) -> List[str]:\n    return items[:count] if count else items\n"
+        )
+        prompt = f"Add type annotations to this Python function:\n{code}"
+        return self.call_llm(f"{system_prompt}\n\n{prompt}", provider=provider, model=model, **kwargs)
 
-    def call_llm(self, prompt, provider='openai', **kwargs):
-        """
-        Call LLM with the specified provider.
-        """
-        if provider == 'openai':
-            return self._call_openai_llm(prompt, **kwargs)
-        elif provider == 'anthropic':
-            return self._call_anthropic_llm(prompt, **kwargs)
-        elif provider == 'ollama':
-            return self._call_ollama_llm(prompt, **kwargs)
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
-
-    def _call_openai_llm(self, prompt, model='gpt-4o', api_key=None, base_url=None, temperature=0.2, top_p=0.9, max_tokens=1024, **kwargs):
-        from langchain_openai import ChatOpenAI
-        try:
-            llm = ChatOpenAI(
-                api_key=api_key or self.openai_api_key,
-                model=model,
-                base_url=base_url,
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-            )
-            result = llm.invoke([{"role": "user", "content": prompt}])
-            return result.content if result.content else "Error: No response from LLM"
-        except Exception as e:
-            print(f"[GeneralLLMProxy] OpenAI API error: {e}")
-            return f"Error: Failed to call OpenAI LLM - {e}"
-
-    def _call_anthropic_llm(self, prompt, model='claude-2', api_key=None, **kwargs):
-        from anthropic import Anthropic
-        try:
-            client = Anthropic(api_key=api_key or self.anthropic_api_key)
-            response = client.messages.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000
-            )
-            return response.content[0].text if response.content else "Error: No response from LLM"
-        except Exception as e:
-            print(f"[GeneralLLMProxy] Anthropic API error: {e}")
-            return f"Error: Failed to call Anthropic LLM - {e}"
-
-    def _call_ollama_llm(self, prompt, model='llama2', **kwargs):
-        from ollama import chat
-        try:
-            response = chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.message.content if response.message else "Error: No response from LLM"
-        except Exception as e:
-            print(f"[GeneralLLMProxy] Ollama API error: {e}")
-            return f"Error: Failed to call Ollama LLM - {e}"
+    def chat(self, prompt: str, provider='openai', model='gpt-4o', **kwargs) -> str:
+        """General chat method for intent recognition and other conversational tasks."""
+        return self.call_llm(prompt, provider=provider, model=model, **kwargs)

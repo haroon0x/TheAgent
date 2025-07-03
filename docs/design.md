@@ -1,79 +1,133 @@
-# Design Doc: Your Project Name
-
-> Please DON'T remove notes for AI
+# Design Doc: TheAgent
 
 ## Requirements
 
-> Notes for AI: Keep it simple and clear.
-> If the requirements are abstract, write concrete user stories
+TheAgent is an AI-powered code assistant that helps users generate documentation, summarize code, generate tests, detect bugs, refactor, add type annotations, migrate code, and interactively chat about code.
 
+- **User Stories:**
+  - As a developer, I want to generate docstrings for my Python functions automatically.
+  - As a developer, I want to summarize what a Python file does.
+  - As a developer, I want to generate unit tests for my code.
+  - As a developer, I want to detect bugs and refactor code with AI assistance.
+  - As a developer, I want to interactively chat with an agent to manage files and ask code-related questions.
 
 ## Flow Design
 
-> Notes for AI:
-> 1. Consider the design patterns of agent, map-reduce, rag, and workflow. Apply them if they fit.
-> 2. Present a concise, high-level description of the workflow.
+TheAgent uses a flow-based architecture with specialized nodes for each task. The main flows are:
+- **Doc Agent Flow**: Generates docstrings for all functions in a file.
+- **Enhanced Agent Flow**: Adds context awareness, safety checks, user approval, and error handling around the main agent node.
+- **Simple Enhanced Flow**: Adds context awareness and error handling.
+- **Chat Flow**: Interactive chat with intent recognition, clarification, file management, code generation, and analysis.
 
-### Applicable Design Pattern:
+### Applicable Design Patterns
+- **Agent**: The agent decides actions based on user input and context.
+- **Workflow**: Tasks are decomposed into nodes and chained in flows.
+- **Safety/Approval**: Enhanced flows add user approval and safety checks.
 
-1. Map the file summary into chunks, then reduce these chunks into a final summary.
-2. Agentic file finder
-   - *Context*: The entire summary of the file
-   - *Action*: Find the file
-
-### Flow high-level Design:
-
-1. **First Node**: This node is for ...
-2. **Second Node**: This node is for ...
-3. **Third Node**: This node is for ...
+### High-Level Flow Example (Enhanced Agent Flow)
 
 ```mermaid
 flowchart TD
-    firstNode[First Node] --> secondNode[Second Node]
-    secondNode --> thirdNode[Third Node]
+    context[Context Awareness] --> safety[Safety Check]
+    safety -- approved --> agent[Agent Node (Doc/Summary/Test/etc.)]
+    safety -- denied --> error[Error Handling]
+    agent --> approval[User Approval]
+    approval -- approved --> error
+    approval -- refine --> agent
 ```
+
 ## Utility Functions
 
-> Notes for AI:
-> 1. Understand the utility function definition thoroughly by reviewing the doc.
-> 2. Include only the necessary utility functions, based on nodes in the flow.
-
-1. **Call LLM** (`utils/call_llm.py`)
-   - *Input*: prompt (str)
+1. **LLM Proxy** (`utils/call_llm.py`)
+   - *Input*: prompt (str), function code (str), etc.
    - *Output*: response (str)
-   - Generally used by most nodes for LLM tasks
+   - Used for all LLM tasks: docstring generation, summarization, test generation, bug detection, refactoring, type annotation, migration, and chat.
+2. **Progress Tracker** (`utils/utils.py`)
+   - *Input*: total (int), description (str)
+   - *Output*: CLI progress updates
+   - Used for tracking progress in CLI operations.
+3. **Flow Visualization** (`utils/visualize_flow.py`)
+   - *Input*: Flow object
+   - *Output*: Mermaid diagram (str)
+   - Used to visualize the flow structure.
 
-2. **Embedding** (`utils/get_embedding.py`)
-   - *Input*: str
-   - *Output*: a vector of 3072 floats
-   - Used by the second node to embed text
+*Note: No embedding or vector database utility is currently implemented, despite the template reference.*
+
+## LLM Provider Abstraction and Modularity
+
+TheAgent is designed to be provider-agnostic and modular. All LLM calls are routed through a single proxy (`GeneralLLMProxy`) that supports multiple providers (OpenAI, Anthropic, Google Gemini, Ollama, etc.).
+
+- **Provider/model selection**: The CLI accepts `--provider` and `--model` arguments, which are passed through the shared context and all flows/nodes.
+- **Node design**: Each agent node receives and stores the provider/model, and uses them for all LLM calls.
+- **Extensibility**: New providers can be added by implementing a new method in the proxy and updating the CLI/flows.
+
+### Rationale
+- **Flexibility**: Users can select the best LLM for their needs, cost, or privacy.
+- **Future-proofing**: Easy to add new providers or switch as the LLM landscape evolves.
+- **Consistency**: All agent logic is provider-agnostic, reducing code duplication.
+
+### Alternatives Considered
+- **Hardcoding a single provider**: Not flexible, would require major refactoring to add new providers.
+- **Provider-specific nodes**: Would lead to code duplication and maintenance burden.
+
+### Trade-offs
+- **Slightly more complex flow/node signatures** (must pass provider/model).
+- **Some provider-specific features may require additional abstraction or conditional logic.**
+
+Overall, this approach provides the best balance of flexibility, maintainability, and user empowerment for a modern, multi-provider LLM agent system.
 
 ## Node Design
 
 ### Shared Store
 
-> Notes for AI: Try to minimize data redundancy
-
-The shared store structure is organized as follows:
+The shared store is a dictionary that holds context, results, and intermediate data for the flow.
 
 ```python
 shared = {
-    "key": "value"
+    "history": [],
+    "current_directory": "...",
+    "file": "...",
+    "summary": "...",
+    "docstring_results": [...],
+    "bug_analysis": "...",
+    "typed_code": "...",
+    "migrated_code": "...",
+    "error_info": {...},
+    ...
 }
 ```
 
-### Node Steps
+### Node Types and Steps
 
-> Notes for AI: Carefully decide whether to use Batch/Async Node/Flow.
+1. **ContextAwarenessNode**: Gathers environment info (directory, Python version, files).
+   - *Type*: Regular
+   - *prep*: Read args from shared
+   - *exec*: Gather context
+   - *post*: Write context info to shared
+2. **SafetyCheckNode**: Confirms safety before in-place modifications.
+   - *Type*: Regular
+   - *prep*: Read context
+   - *exec*: Ask user for approval
+   - *post*: Return action ("approved"/"denied")
+3. **Agent Nodes** (DocAgentNode, SummaryAgentNode, etc.): Perform the main LLM task.
+   - *Type*: Regular
+   - *prep*: Read file or code from shared
+   - *exec*: Call LLM proxy for the specific task
+   - *post*: Write result to shared, output to file/console
+4. **UserApprovalNode**: Asks user to approve or refine the result.
+   - *Type*: Regular
+   - *prep*: Read result from shared
+   - *exec*: Ask user for approval/refinement
+   - *post*: Return action ("approved"/"refine"/"denied")
+5. **ErrorHandlingNode**: Handles errors and provides suggestions.
+   - *Type*: Regular
+   - *prep*: Read error context
+   - *exec*: Suggest fixes
+   - *post*: Write error info to shared
 
-1. First Node
-  - *Purpose*: Provide a short explanation of the node’s function
-  - *Type*: Decide between Regular, Batch, or Async
-  - *Steps*:
-    - *prep*: Read "key" from the shared store
-    - *exec*: Call the utility function
-    - *post*: Write "key" to the shared store
+*Other nodes include IntentRecognitionNode, ClarificationNode, FileManagementNode, etc., for chat and file operations.*
 
-2. Second Node
-  ...
+---
 
+**Summary**  
+TheAgent is a modular, flow-based AI code assistant. It uses LLMs for code understanding and generation, with safety and user approval features. The design is extensible, allowing new agent nodes and flows to be added easily.
