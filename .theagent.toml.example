@@ -1,0 +1,14 @@
+# Example .theagent.toml for TheAgent
+# Copy this file to .theagent.toml and fill in your API keys as needed.
+
+# OpenAI API key (optional, only if using OpenAI)
+openai_api_key = "sk-..."
+
+# Anthropic API key (optional, only if using Anthropic)
+anthropic_api_key = "..."
+
+# Google Gemini API key (default, required for Gemini)
+google_api_key = "..."
+
+# Ollama host URL (optional, only if using Ollama)
+ollama_host = "http://localhost:11434" 

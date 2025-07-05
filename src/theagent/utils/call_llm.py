@@ -4,90 +4,57 @@ import time
 from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from .utils import ProgressTracker, create_progress_tracker
+import sys
+import subprocess
+from theagent.providers.openai_provider import OpenAIProvider
+from theagent.providers.anthropic_provider import AnthropicProvider
+from theagent.providers.google_provider import GoogleProvider
+from theagent.providers.ollama_provider import OllamaProvider
+
+# Load .env only once at module level
+load_dotenv()
+
+def ensure_package(pkg_name, import_name=None):
+    import_name = import_name or pkg_name
+    try:
+        __import__(import_name)
+        return True
+    except ImportError:
+        print(f"[ERROR] The required package '{pkg_name}' is not installed.")
+        resp = input(f"Would you like to install it now with 'pip install {pkg_name}'? [Y/n]: ").strip().lower()
+        if resp in {"", "y", "yes"}:
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg_name])
+                print(f"[INFO] Successfully installed {pkg_name}. Please rerun your command.")
+                sys.exit(0)
+            except Exception as e:
+                print(f"[ERROR] Failed to install {pkg_name}: {e}")
+                sys.exit(1)
+        else:
+            print(f"Please install it manually: pip install {pkg_name}")
+            sys.exit(1)
+        return False
 
 class GeneralLLMProxy:
-    def __init__(self):
-        load_dotenv()
-        self.openai_api_key = os.environ.get("OPENAI_API_KEY")
-        self.anthropic_api_key = os.environ.get("ANTHROPIC_API_KEY")
-        self.google_api_key = os.environ.get("GOOGLE_GENAI_API_KEY")
-        self.ollama_host = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+    """
+    Modular LLM proxy supporting OpenAI, Anthropic, Google Gemini, and Ollama.
+    """
+    def __init__(self, openai_api_key=None, anthropic_api_key=None, google_api_key=None, ollama_host=None):
+        self.openai_api_key = openai_api_key or os.environ.get("OPENAI_API_KEY")
+        self.anthropic_api_key = anthropic_api_key or os.environ.get("ANTHROPIC_API_KEY")
+        self.google_api_key = google_api_key or os.environ.get("GOOGLE_GENAI_API_KEY")
+        self.ollama_host = ollama_host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
+        self.providers = {
+            'openai': OpenAIProvider(api_key=self.openai_api_key),
+            'anthropic': AnthropicProvider(api_key=self.anthropic_api_key),
+            'google': GoogleProvider(api_key=self.google_api_key),
+            'ollama': OllamaProvider(host=self.ollama_host),
+        }
 
     def call_llm(self, prompt, provider='openai', **kwargs):
-        if provider == 'openai':
-            return self._call_openai_llm(prompt, **kwargs)
-        elif provider == 'anthropic':
-            return self._call_anthropic_llm(prompt, **kwargs)
-        elif provider == 'ollama':
-            return self._call_ollama_llm(prompt, **kwargs)
-        elif provider == 'google':
-            return self._call_google_genai_llm(prompt, **kwargs)
-        else:
+        if provider not in self.providers:
             raise ValueError(f"Unsupported provider: {provider}")
-
-    def _call_openai_llm(self, prompt, model='gpt-4o', api_key=None, base_url=None, temperature=0.2, top_p=0.9, max_tokens=1024, **kwargs):
-        import openai
-        api_key = api_key or self.openai_api_key
-        openai.api_key = api_key
-        if base_url:
-            openai.base_url = base_url
-        try:
-            response = openai.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=temperature,
-                top_p=top_p,
-                max_tokens=max_tokens,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"[GeneralLLMProxy] OpenAI API error: {e}")
-            return f"Error: Failed to call OpenAI LLM - {e}"
-
-    def _call_anthropic_llm(self, prompt, model='claude-3-haiku-20240307', api_key=None, **kwargs):
-        import anthropic
-        api_key = api_key or self.anthropic_api_key
-        client = anthropic.Anthropic(api_key=api_key)
-        try:
-            response = client.messages.create(
-                model=model,
-                max_tokens=1024,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            return response.content[0].text.strip() if response.content else "Error: No response from LLM"
-        except Exception as e:
-            print(f"[GeneralLLMProxy] Anthropic API error: {e}")
-            return f"Error: Failed to call Anthropic LLM - {e}"
-
-    def _call_ollama_llm(self, prompt, model='llama2', host=None, **kwargs):
-        import ollama
-        host = host or self.ollama_host
-        try:
-            response = ollama.chat(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                base_url=host
-            )
-            return response.message.content.strip() if response.message else "Error: No response from LLM"
-        except Exception as e:
-            print(f"[GeneralLLMProxy] Ollama API error: {e}")
-            return f"Error: Failed to call Ollama LLM - {e}"
-
-    def _call_google_genai_llm(self, prompt, model='gemini-2.5-flash', api_key=None, **kwargs):
-        from google import genai
-        import os
-        api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        client = genai.Client(api_key=api_key)
-        try:
-            response = client.models.generate_content(
-                model=model,
-                contents=prompt,
-                **kwargs
-            )
-            return response.text.strip() 
-        except Exception as e:
-            print(f"[GeneralLLMProxy] Google Gemini API error: {e}")
-            return f"Error: Failed to call Google Gemini - {e}"
+        return self.providers[provider].generate(prompt, **kwargs)
 
     # Agent methods
     def generate_docstring(self, function_code: str, provider='openai', model='gpt-4o', **kwargs) -> str:

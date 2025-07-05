@@ -1,13 +1,37 @@
 [project]
 name = "theagent"
 version = "0.1.0"
-description = "Add your description here"
+description = "A modular, agentic Python CLI tool for code documentation, summarization, testing, bug detection, refactoring, type annotation, migration, and interactive chat, powered by LLMs."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "langchain[openai]>=0.3.26",
+    "google-genai>=1.24.0",
+    "pocketflow",
     "pytest>=8.4.1",
+    "python-dotenv>=1.0.0",
+    "toml>=0.10.2",
+    "twine>=6.1.0",
 ]
+keywords = ["llm", "agent", "cli", "code", "documentation", "refactor", "summarize", "test", "bug", "type", "migration", "chat", "openai", "anthropic", "gemini", "ollama"]
+license = {text = "Apache-2.0"}
+authors = [
+    {name = "Muhammed Haroon", email = "haroonbmc0@gmail.com"}
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Topic :: Software Development :: Documentation Tools",
+    "Topic :: Software Development :: Testing Tools",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent"
+]
+[project.urls]
+Homepage = "https://github.com/haroon0x/theagent"
+Documentation = "https://github.com/haroon0x/theagent#readme"
+Source = "https://github.com/haroon0x/theagent"
 
 [project.scripts]
 theagent = "theagent.main:main"
