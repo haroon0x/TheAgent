@@ -1,0 +1,2 @@
+[console_scripts]
+theagent = theagent.main:main

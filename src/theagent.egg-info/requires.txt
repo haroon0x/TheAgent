@@ -1,0 +1,6 @@
+google-genai>=1.24.0
+pocketflow
+pytest>=8.4.1
+python-dotenv>=1.0.0
+toml>=0.10.2
+twine>=6.1.0

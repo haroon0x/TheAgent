@@ -1,3 +1,33 @@
+Metadata-Version: 2.4
+Name: theagent
+Version: 0.1.0
+Summary: A modular, agentic Python CLI tool for code documentation, summarization, testing, bug detection, refactoring, type annotation, migration, and interactive chat, powered by LLMs.
+Author-email: Muhammed Haroon <haroonbmc0@gmail.com>
+License: Apache-2.0
+Project-URL: Homepage, https://github.com/haroon0x/theagent
+Project-URL: Documentation, https://github.com/haroon0x/theagent#readme
+Project-URL: Source, https://github.com/haroon0x/theagent
+Keywords: llm,agent,cli,code,documentation,refactor,summarize,test,bug,type,migration,chat,openai,anthropic,gemini,ollama
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Libraries :: Application Frameworks
+Classifier: Topic :: Software Development :: Documentation Tools
+Classifier: Topic :: Software Development :: Testing Tools
+Classifier: License :: OSI Approved :: Apache Software License
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Operating System :: OS Independent
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: google-genai>=1.24.0
+Requires-Dist: pocketflow
+Requires-Dist: pytest>=8.4.1
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: toml>=0.10.2
+Requires-Dist: twine>=6.1.0
+Dynamic: license-file
+
 # TheAgent
 
 [![Build Status](https://img.shields.io/github/actions/workflow/status/haroon0x/theagent/ci.yml?branch=main)](https://github.com/haroon0x/theagent/actions)
